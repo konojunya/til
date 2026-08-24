@@ -1,0 +1,4 @@
+interface:
+  display_name: "TIL Creator"
+  short_description: "Goシステム学習をSection単位で設計・伴走します"
+  default_prompt: "Use $til-creator to create or continue a test-driven Go system learning workspace."

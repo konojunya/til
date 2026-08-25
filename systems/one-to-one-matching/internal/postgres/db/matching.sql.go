@@ -31,6 +31,43 @@ func (q *Queries) HasLike(ctx context.Context, arg HasLikeParams) (bool, error) 
 	return exists, err
 }
 
+const listMatches = `-- name: ListMatches :many
+SELECT
+  user_low_id,
+  user_high_id
+FROM matches
+WHERE user_low_id = $1
+  OR user_high_id = $1
+ORDER BY
+  user_low_id,
+  user_high_id
+`
+
+type ListMatchesRow struct {
+	UserLowID  string
+	UserHighID string
+}
+
+func (q *Queries) ListMatches(ctx context.Context, userID string) ([]ListMatchesRow, error) {
+	rows, err := q.db.Query(ctx, listMatches, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMatchesRow
+	for rows.Next() {
+		var i ListMatchesRow
+		if err := rows.Scan(&i.UserLowID, &i.UserHighID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockMatchingPair = `-- name: LockMatchingPair :exec
 SELECT pg_advisory_xact_lock(
     hashtext(

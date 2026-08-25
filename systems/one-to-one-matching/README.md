@@ -3,8 +3,9 @@
 マッチングアプリ型の「相互に好意を示した 2 人を 1 組の Match にする」仕組みを、Go とテストで小さく組み立てる学習用ワークスペースです。
 
 - Workspace status: `in_progress`
-- Active Section: `Section 6 — HTTP境界`
-- Current files: `README.md`, `go.mod`, `go.sum`, learner-written Go files under `internal/matching` and `internal/postgres`, `compose.yaml`, migrations under `migrations`
+- Active Section: `none`
+- Next Section: `Section 7 — Transactional Outbox と SQS`（ready）
+- Current files: `README.md`, `go.mod`, `go.sum`, learner-written Go files under `internal/matching`、`internal/postgres`、`internal/httpapi`, `compose.yaml`, migrations under `migrations`
 
 ## 学習の進め方
 
@@ -194,8 +195,8 @@ one-to-one-matching/
 | 3. PostgreSQL の制約 | `complete` | schema、migration、DB が守る不変条件 | Docker PostgreSQL と初期 migration | 不正 Like・重複 Like・重複 Match を DB が拒否 |
 | 4. 永続化と transaction | `complete` | Repository、atomicity、rollback | PostgreSQL 版 `SendLike` | 逆 Like で Match と Outbox が同時に作られる |
 | 5. sqlc移行と並行実行 | `complete` | SQL-first data access、DB concurrency、lock/retry境界 | sqlc生成Queriesを使う競合耐性use case | 生成差分なし、同時実行後も両方向Like 2件、Match・event各1件 |
-| 6. HTTP 境界 | `active` | transport と domain の分離、status code | Like API と Match query API | HTTP 入力から DB の結果まで検証 |
-| 7. Transactional Outbox と SQS | `locked` | dual write、at-least-once、再試行 | kumo SQS publisher | キュー停止中の event が復旧後に配信される |
+| 6. HTTP 境界 | `complete` | transport と domain の分離、status code | Like API と Match query API | HTTP 入力から DB の結果まで検証 |
+| 7. Transactional Outbox と SQS | `ready` | dual write、at-least-once、再試行 | kumo SQS publisher | キュー停止中の event が復旧後に配信される |
 | 8. システム E2E | `locked` | component 接続、観測可能な完了条件 | 最終シナリオテスト | HTTP→PostgreSQL→kumo SQS を実物で通す |
 
 ## Completed Section — Section 1: 2 人組の同一性を表す
@@ -871,6 +872,119 @@ SELECT pg_advisory_xact_lock(
 - 2026-08-25: AIが`A→B`と`B→A`を各16件ずつ同時送信するconcurrency integration testを追加。32 requestが成功し、`LikeCreated`は2回、`MatchCreated`は1回、DBはLike 2件、Match 1件、Outbox 1件、event ID生成1回へ収束するGreenを確認した。Matchのprimary keyだけでなく、`SaveMatch`のcreated結果を条件にOutboxを保存する境界もevent重複を防いでいる。
 - 2026-08-25: AIが別transactionでPair lockを保持し、100ms timeout付き`SendLike`を待機させるintegration testを追加。`context.DeadlineExceeded`で中断され、Like、Match、Outbox、event ID生成はいずれも0、1 connectionに制限したpoolを直後に再利用できるGreenを確認した。待機queryのcontext cancellationと、error pathでのdeferred rollbackがconnectionを返却することを検証した。
 - 2026-08-25: sqlc再生成前後のhash一致、`sqlc vet`、通常test、実PostgreSQL integration test、通常・integrationのGo vetを確認。race detector付きintegration suiteを10回反復して19.834秒で成功し、hang、deadlock、flaky failureがない基準を満たしたためSection 5を完了した。
+
+## Completed Section — Section 6: HTTP境界
+
+### Question
+
+Section 5までに作った競合安全な`SendLike`とPostgreSQLのMatchを、HTTPの入力・status code・JSONという公開contractへどう変換すれば、transportとdomainを混ぜずに利用できるでしょうか。重複LikeをHTTP上でも冪等に扱い、domain errorやDB errorの詳細を外へ漏らさず、実際のPostgreSQLまで到達する振る舞いをどうテストすればよいでしょうか。
+
+### HTTP contract
+
+| Method / path | Success | Response | 意味 |
+| --- | --- | --- | --- |
+| `PUT /users/{senderID}/likes/{receiverID}` | `201 Created` | `{"like_created":true,"match_created":false}` | 方向付きLikeを新規作成した |
+| `PUT /users/{senderID}/likes/{receiverID}` | `200 OK` | `{"like_created":false,"match_created":false}` | 同じLikeが既にあり、状態を増やさず処理した |
+| `GET /users/{userID}/matches` | `200 OK` | `{"matches":[{"user_low_id":"alice","user_high_id":"bob"}]}` | 指定ユーザーを含むMatchを安定した順序で返す |
+
+相互Likeを完成させた`PUT`も、対象の方向付きLikeを新規作成しているため`201 Created`とし、`match_created:true`でMatch成立を表す。JSON fieldはこのworkspace内で`snake_case`へ統一する。Matchが0件の場合も`matches`は`null`ではなく空配列`[]`を返す。
+
+すべてのapplication errorは次のshapeへ固定し、SQLSTATE、table名、query、stack traceは公開しない。
+
+```json
+{
+  "error": {
+    "code": "SELF_LIKE",
+    "message": "sender and receiver must be different"
+  }
+}
+```
+
+| Status | Error code | 条件 |
+| --- | --- | --- |
+| `422 Unprocessable Entity` | `INVALID_USER_ID` | pathから有効な`matching.UserID`を作れない |
+| `422 Unprocessable Entity` | `SELF_LIKE` | senderとreceiverが同一 |
+| `404 Not Found` | `USER_NOT_FOUND` | Like対象の既知ユーザーがPostgreSQLに存在しない |
+| `405 Method Not Allowed` | `METHOD_NOT_ALLOWED` | 既知pathに対応しないmethodを送った |
+| `500 Internal Server Error` | `INTERNAL_ERROR` | 公開可能なcategoryへ変換されていない内部error |
+
+### Learn
+
+- Go 1.22以降の`http.ServeMux`が持つmethod付きpatternと`Request.PathValue`
+- `httptest`でhandlerだけを検証するunit testと、実PostgreSQLまで通すHTTP integration testの役割の違い
+- HTTP request/response DTO、`matching.UserID`・`matching.Pair`、sqlc generated modelをそれぞれ別の境界に置く理由
+- handlerが自分の利用に必要な小さいinterfaceを定義し、PostgreSQLの具体型へ依存しないconsumer-owned interface
+- 冪等なresource作成に`PUT`を使い、新規作成と既存状態を`201`と`200`で区別する方法
+- domain errorを安定したHTTP statusとmachine-readable error codeへ変換し、内部errorを漏らさない方法
+- list responseを常に空配列または配列にし、DB取得順に依存せず決定的に返す理由
+- request contextをapplication serviceへそのまま渡し、client切断やtimeoutをDB処理まで伝播させる流れ
+
+### Decide
+
+- HTTP frameworkは追加せず、現在のGo `1.26.3`で使える標準`net/http`、method付きServeMux pattern、`httptest`を使う。
+- Likeはclientから見てURIで識別できる方向付きresourceなので、`PUT /users/{senderID}/likes/{receiverID}`を採用する。同じrequestの再送は状態を増やさない。
+- Match一覧は`GET /users/{userID}/matches`とし、初期実装では学習fixture規模の全件を返す。productionへ広げる場合は公開前にcursor paginationを追加する。
+- handlerは`SendLike`と`ListMatches`に必要な小さいinterfaceへ依存し、`postgres.Repository`、pgx、sqlc generated packageをimportしない。
+- handlerで外部文字列を`matching.UserID`へ変換し、それ以降のapplication層は検証済みvalue objectを受け取る。
+- success responseとerror responseは条件によってfield shapeを変えず、JSONの`Content-Type`を`application/json`へ統一する。
+- `401 Unauthorized`は認証情報がない、または無効な場合に予約する。HTTPとして解釈できるがdomain validationを満たさないself Likeなどは`422 Unprocessable Entity`とし、認証をやり直すべきerrorと混同しない。
+- known pathへのmethod違いもstructured JSONにするため、method付きpatternに加えて同じpathのfallback handlerを登録し、`Allow` headerを返す。
+- PostgreSQLのforeign key violationはadapterまたはapplication境界で`USER_NOT_FOUND`に相当するerrorへ変換し、HTTP handlerからSQLSTATEを直接判定しない。
+- Match一覧queryは`internal/postgres/query/matching.sql`へsqlc named queryとして追加し、`matching.Pair`へRepositoryで変換する。結果順はSQLで固定する。
+- Section 6では認証・認可を扱わない。senderを認証済みuserと一致させる責務は将来の公開APIで別途追加する。
+
+### Build
+
+1. `internal/httpapi`のconsumer-owned interfaceと、`PUT /users/{senderID}/likes/{receiverID}`の片方向Like contract testを書く。
+2. path parameterを`matching.UserID`へ変換し、request context付きで`SendLike`を呼び、`201`とJSONへ変換するhandlerを実装する。
+3. 重複Likeの`200`、相互Likeの`201 + match_created:true`、validation error、未知user、内部error、method違いをtable-driven testで固定する。
+4. Match一覧のsqlc named queryとRepository mappingを追加し、指定userを含むPairだけが決定的な順序で返るintegration testを通す。
+5. `GET /users/{userID}/matches`の空配列・複数Match・structured errorをhandler testで固定する。
+6. `httptest.Server`と実PostgreSQLを接続し、HTTPで片方向Like、逆方向Like、重複送信、Match一覧取得までを通すintegration testを作る。
+7. 通常test、実PostgreSQL integration test、race detector、Go vetを実行し、Section 6のcontractと内部の競合安全性が同時に維持されることを確認する。
+
+### Current micro-step
+
+- Target: GET Match一覧とHTTP→PostgreSQL integrationをまとめて実装し、Section 6を完了する（complete）
+- Purpose: HTTP実装は普遍的なtransport codeとしてまとめ、0件の空配列、複数PairのDTO変換、context伝播、structured error、method違い、実DBまでのPUT・GETシナリオを一括で固定する。
+- Result: consumer-owned `MatchingApplication`、GET route、Pairからresponse DTOへの変換、空配列の正規化、structured error、method fallbackを実装した。PostgreSQL `MatchingService`はreadをRepositoryへ委譲し、HTTP packageはpgx・sqlc・SQLSTATEへ依存しない。
+- Evidence: GET unit contract、HTTP→PostgreSQL integration、通常・integration suite、通常race 10回、integration race、通常・integration vetがGreen。HTTPの片方向Like、相互Like、再送、GET後もLike 2件、Match 1件、Outbox 1件を確認した。
+
+### Tests
+
+- handler unit testがPostgreSQLを使わず、path入力、application呼び出し、status、header、JSONだけを検証する。
+- 同じLikeの2回目は`200`、新しいLikeは`201`となり、どちらも同じresponse shapeを返す。
+- self Like、未知user、内部error、method違いが決めたstatusとstructured error codeへ変換される。
+- Match一覧は指定userを含むPairだけを安定順で返し、0件では`matches: []`になる。
+- HTTP integration testで相互Like後にLike 2件、Match 1件、pending Outbox 1件となり、GETから同じPairを取得できる。
+- request contextがapplicationへ渡され、handlerが独自のbackground contextへ置き換えない。
+
+### Done when
+
+- HTTP packageがpgx、sqlc generated package、PostgreSQL errorの詳細へ直接依存しない。
+- 公開するmethod、path、success/error JSON、status code、`Content-Type`、`Allow` headerがtestで固定される。
+- HTTP DTOからdomain value object、application service、Repository、PostgreSQLまでの依存方向が一方向になる。
+- handler unit testと実PostgreSQLを使うHTTP integration testが両方Greenになる。
+- HTTP経由の再送と相互LikeでもSection 5のLike、Match、Outbox不変条件が崩れない。
+- 通常・integration test、race detector、Go vetが成功する。
+
+### Completion
+
+- Result: `PUT /users/{senderID}/likes/{receiverID}`と`GET /users/{userID}/matches`を、domain/application/PostgreSQLから分離した標準`net/http`境界として実装した。
+- Contract: 新規Likeは`201`、再送は`200`、相互成立は`match_created:true`。Match一覧は安定順で、0件でも`matches: []`。公開errorは固定JSONとし、内部DB詳細を漏らさない。
+- Integration: `httptest.Server`から実PostgreSQLへ片方向Like、相互Like、再送、一覧取得を通し、Like 2件、Match 1件、pending Outbox 1件へ収束することを確認した。
+- Verification: sqlc再生成hash不変、`sqlc vet`、通常test、通常race・shuffle 10回、実DB integration test、integration race、通常・integrationのGo vet、`gofmt`、`git diff --check`、`go mod tidy -diff`がすべてGreen。
+
+### Notes / evidence
+
+- 2026-08-26: AIが片方向Likeのhandler unit testを追加。`NewHandler`だけが未定義となる意図したcompile Redの後、learnerがconsumer-owned `LikeSender`、標準ServeMuxのPUT route、pathからの`UserID`生成、request context伝播、`201` JSON responseを実装した。対象testと通常test全体のGreen、`gofmt`差分なしを確認した。
+- 2026-08-26: AIが重複Likeでもfalseの2 fieldを省略せず、同じJSON shapeを`200 OK`で返すunit testを追加。既存handlerが`201`を返すstatus差分だけの意図したRedを確認後、learnerが`LikeCreated`に応じて`201`と`200`を選ぶ処理を実装した。新規・重複の対象testと通常test全体のGreen、`gofmt`差分なしを確認した。
+- 2026-08-26: AIがapplicationの`matching.ErrSelfLike`を`422`、`application/json`、`SELF_LIKE`と公開messageへ変換するunit testを追加。既存fallbackの`500` plain textとなる意図したRedを確認後、learnerが`errors.Is`による分類、error response DTO、success/error共通のJSON writerを実装した。対象test、HTTP package全体、通常test全体のGreen、`gofmt`差分なしを確認した。
+- 2026-08-26: AIが未分類のapplication errorで内部文言を漏らさず、`500`、`application/json`、`INTERNAL_ERROR`とgeneric messageを返すunit testを追加。既存fallbackがplain textとなる意図したRedを確認後、learnerがfallbackも共通JSON writerへ移した。対象test、HTTP package全体、通常test全体のGreen、`gofmt`差分なしを確認した。
+- 2026-08-26: method違い、未知ユーザーのapplication分類、相互Like成立responseをunit contractで固定した。PostgreSQLの`23503`は`matching.ErrUserNotFound`へ変換しつつ、元の`*pgconn.PgError`も内部診断用に保持した。
+- 2026-08-26: sqlc `ListMatches` queryとRepository mappingを追加し、対象ユーザーがPairのlow/highどちら側でも取得し、無関係なPairを除外して安定順で返す実DBtestをGreenにした。初回の列名typoは`sqlc vet`では検出されず、実DBの`SQLSTATE 42703`で検出できた。
+- 2026-08-26: GETの空配列、複数Pair、context伝播、内部error、method違いをhandler unit testで固定。HTTP→実PostgreSQLのintegration testで片方向Like、相互Like、再送、GETを通し、Like 2件、Match 1件、Outbox 1件を確認した。
+- 2026-08-26: Section 6完了確認としてsqlc生成一致・vet、通常・integration test、通常race・shuffle 10回、integration race、通常・integration vet、gofmt、diff check、module metadata整合を確認し、Section 6を`complete`、Section 7を`ready`にした。
 
 ## 最終 acceptance criteria
 

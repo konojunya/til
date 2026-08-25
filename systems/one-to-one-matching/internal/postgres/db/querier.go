@@ -11,6 +11,7 @@ import (
 type Querier interface {
 	// EXISTSは対象が0件ならfalse、1件以上ならtrueというboolean 1行を必ず返す。
 	HasLike(ctx context.Context, arg HasLikeParams) (bool, error)
+	ListMatches(ctx context.Context, userID string) ([]ListMatchesRow, error)
 	LockMatchingPair(ctx context.Context, arg LockMatchingPairParams) error
 	SaveLike(ctx context.Context, arg SaveLikeParams) (int64, error)
 	SaveMatch(ctx context.Context, arg SaveMatchParams) (int64, error)

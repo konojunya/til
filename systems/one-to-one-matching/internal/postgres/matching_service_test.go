@@ -781,3 +781,139 @@ func TestMatchingServiceRollsBackMatchWhenOutboxSaveFails(t *testing.T) {
 		t.Fatalf("rolled back outbox count = %d, want 0", outboxCount)
 	}
 }
+
+func TestMatchingServiceReturnsUserNotFoundForUnknownParticipant(t *testing.T) {
+	ctx, conn := connectTestPostgres(t)
+
+	tests := []struct {
+		name           string
+		senderValue    string
+		receiverValue  string
+		knownUserValue string
+		wantConstraint string
+	}{
+		{
+			name:           "unknown sender",
+			senderValue:    "application-unknown-sender-missing",
+			receiverValue:  "application-unknown-sender-known",
+			knownUserValue: "application-unknown-sender-known",
+			wantConstraint: "likes_sender_fk",
+		},
+		{
+			name:           "unknown receiver",
+			senderValue:    "application-unknown-receiver-known",
+			receiverValue:  "application-unknown-receiver-missing",
+			knownUserValue: "application-unknown-receiver-known",
+			wantConstraint: "likes_receiver_fk",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := deleteMatchingServiceFixture(
+				ctx,
+				conn,
+				tt.senderValue,
+				tt.receiverValue,
+			); err != nil {
+				t.Fatalf("failed to clean fixture before test: %v", err)
+			}
+
+			t.Cleanup(func() {
+				if err := deleteMatchingServiceFixture(
+					context.Background(),
+					conn,
+					tt.senderValue,
+					tt.receiverValue,
+				); err != nil {
+					t.Errorf("failed to clean fixture after test: %v", err)
+				}
+			})
+
+			if _, err := conn.Exec(
+				ctx,
+				`INSERT INTO users (id) VALUES ($1)`,
+				tt.knownUserValue,
+			); err != nil {
+				t.Fatalf("failed to insert known user: %v", err)
+			}
+
+			sender, err := matching.NewUserID(tt.senderValue)
+			if err != nil {
+				t.Fatalf("failed to create sender UserID: %v", err)
+			}
+
+			receiver, err := matching.NewUserID(tt.receiverValue)
+			if err != nil {
+				t.Fatalf("failed to create receiver UserID: %v", err)
+			}
+
+			service := NewMatchingService(
+				NewTransactor(conn),
+				func() string {
+					t.Fatal("event ID generator must not be called for unknown user")
+					return ""
+				},
+			)
+
+			result, err := service.SendLike(ctx, sender, receiver)
+			if err == nil {
+				t.Fatal("SendLike() error = nil, want error")
+			}
+
+			if result != (matching.SendLikeResult{}) {
+				t.Errorf("SendLike() result = %+v, want zero value", result)
+			}
+
+			if !errors.Is(err, matching.ErrUserNotFound) {
+				t.Fatalf(
+					"SendLike() error = %v, want matching.ErrUserNotFound in chain",
+					err,
+				)
+			}
+
+			var postgresError *pgconn.PgError
+			if !errors.As(err, &postgresError) {
+				t.Fatalf(
+					"SendLike() error type = %T, want *pgconn.PgError in chain",
+					err,
+				)
+			}
+
+			if postgresError.Code != "23503" {
+				t.Errorf(
+					"PostgreSQL error code = %q, want %q",
+					postgresError.Code,
+					"23503",
+				)
+			}
+
+			if postgresError.ConstraintName != tt.wantConstraint {
+				t.Errorf(
+					"constraint = %q, want %q",
+					postgresError.ConstraintName,
+					tt.wantConstraint,
+				)
+			}
+
+			var likeCount int
+			if err := conn.QueryRow(
+				ctx,
+				`
+					SELECT COUNT(*)
+					FROM likes
+					WHERE sender_id IN ($1, $2)
+					   OR receiver_id IN ($1, $2)
+				`,
+				tt.senderValue,
+				tt.receiverValue,
+			).Scan(&likeCount); err != nil {
+				t.Fatalf("failed to count likes: %v", err)
+			}
+
+			if likeCount != 0 {
+				t.Errorf("like count = %d, want 0", likeCount)
+			}
+		})
+	}
+}

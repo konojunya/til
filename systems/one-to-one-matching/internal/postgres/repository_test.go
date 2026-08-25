@@ -197,3 +197,93 @@ func TestRepositorySaveMatchIsIdempotent(t *testing.T) {
 		t.Fatalf("expected 1 match, but got %d", got)
 	}
 }
+
+func TestRepositoryListMatchesReturnsOnlyUserMatchesInStableOrder(t *testing.T) {
+	ctx, conn := connectTestPostgres(t)
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("failed to begin transaction: %v", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	const (
+		lowerValue           = "list-matches-a"
+		targetValue          = "list-matches-m"
+		higherValue          = "list-matches-z"
+		unrelatedLowerValue  = "list-matches-x"
+		unrelatedHigherValue = "list-matches-y"
+	)
+
+	if _, err := tx.Exec(
+		ctx,
+		`
+			INSERT INTO users (id)
+			VALUES ($1), ($2), ($3), ($4), ($5)
+		`,
+		lowerValue,
+		targetValue,
+		higherValue,
+		unrelatedLowerValue,
+		unrelatedHigherValue,
+	); err != nil {
+		t.Fatalf("failed to insert users: %v", err)
+	}
+
+	// 期待する取得順とは逆に保存し、結果がINSERT順へ依存しないことを確認する。
+	if _, err := tx.Exec(
+		ctx,
+		`
+			INSERT INTO matches (user_low_id, user_high_id)
+			VALUES
+				($1, $2),
+				($3, $4),
+				($5, $6)
+		`,
+		targetValue,
+		higherValue,
+		unrelatedLowerValue,
+		unrelatedHigherValue,
+		lowerValue,
+		targetValue,
+	); err != nil {
+		t.Fatalf("failed to insert matches: %v", err)
+	}
+
+	target, err := matching.NewUserID(targetValue)
+	if err != nil {
+		t.Fatalf("failed to create target UserID: %v", err)
+	}
+
+	repo := NewRepository(tx)
+
+	got, err := repo.ListMatches(ctx, target)
+	if err != nil {
+		t.Fatalf("ListMatches() error = %v", err)
+	}
+
+	want := [][2]string{
+		{lowerValue, targetValue},
+		{targetValue, higherValue},
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("ListMatches() count = %d, want %d", len(got), len(want))
+	}
+
+	for i, pair := range got {
+		gotIDs := [2]string{
+			pair.Low().String(),
+			pair.High().String(),
+		}
+
+		if gotIDs != want[i] {
+			t.Errorf(
+				"ListMatches()[%d] = %q, want %q",
+				i,
+				gotIDs,
+				want[i],
+			)
+		}
+	}
+}

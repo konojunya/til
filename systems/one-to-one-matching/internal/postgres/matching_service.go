@@ -78,3 +78,17 @@ func (s *MatchingService) SendLike(ctx context.Context, sender, receiver matchin
 
 	return result, nil
 }
+
+func (s *MatchingService) ListMatches(ctx context.Context, userID matching.UserID) ([]matching.Pair, error) {
+	repository := NewRepository(s.transactor.database)
+
+	pairs, err := repository.ListMatches(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"matching service list matches: %w",
+			err,
+		)
+	}
+
+	return pairs, nil
+}

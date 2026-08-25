@@ -42,3 +42,14 @@ SELECT pg_advisory_xact_lock(
         )
     )
 );
+
+-- name: ListMatches :many
+SELECT
+  user_low_id,
+  user_high_id
+FROM matches
+WHERE user_low_id = sqlc.arg(user_id)
+  OR user_high_id = sqlc.arg(user_id)
+ORDER BY
+  user_low_id,
+  user_high_id;

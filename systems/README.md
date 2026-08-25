@@ -28,6 +28,18 @@ Goでバックエンドの設計パターンを小さく実装し、ローカル
 | [partition key design](./partition-key-design/) | 準備済み | hot key、write sharding、順序と分散 | kumo/DynamoDB・Kinesis | 中 |
 | [PostgreSQL performance lab](./postgres-performance-lab/) | 準備済み | EXPLAIN、index、pagination、MVCC、lock | PostgreSQL | 高 |
 | [event-sourced ledger](./event-sourced-ledger/) | 準備済み | append-only event、楽観lock、snapshot、replay | PostgreSQL、kumo/SQS | 中 |
+| [distributed job scheduler](./distributed-job-scheduler/) | 準備済み | lease、heartbeat、fencing token、retry | PostgreSQL | 高 |
+| [webhook delivery](./webhook-delivery/) | 準備済み | HMAC署名、delivery log、retry、replay | PostgreSQL、local HTTP receiver | 高 |
+| [resumable file processing](./resumable-file-processing/) | 準備済み | presigned upload、multipart、checksum、非同期処理 | PostgreSQL、kumo/S3・SQS | 高 |
+| [online schema migration](./online-schema-migration/) | 準備済み | expand/contract、dual write、backfill、無停止DDL | PostgreSQL | 高 |
+| [multi-tenant data isolation](./multi-tenant-data-isolation/) | 準備済み | composite key、RLS、pool安全性、tenant quota | PostgreSQL、Redis | 高 |
+| [resilient HTTP client](./resilient-http-client/) | 準備済み | timeout budget、retry、circuit breaker、bulkhead | local fault-injection HTTP server | 高 |
+| [PostgreSQL search/autocomplete](./postgres-search-autocomplete/) | 準備済み | full-text、trigram、ranking、stable pagination | PostgreSQL | 中 |
+| [CDC projection pipeline](./cdc-projection-pipeline/) | 準備済み | logical replication、LSN、snapshot、projection | PostgreSQL、kumo/Kinesis・DynamoDB | 中 |
+| [game leaderboard](./game-leaderboard/) | 準備済み | Sorted Set、同点順位、season、rebuild | PostgreSQL、Redis | 中 |
+| [WebSocket presence](./websocket-presence/) | 準備済み | heartbeat、multi-device、fan-out、offline resume | PostgreSQL、Redis | 中 |
+| [feature flag service](./feature-flag-service/) | 準備済み | stable rollout、override、cache、kill switch | kumo/DynamoDB・EventBridge・SQS | 中 |
+| [tamper-evident audit log](./tamper-evident-audit-log/) | 準備済み | append-only、hash chain、署名checkpoint、redaction | PostgreSQL、kumo/S3 | 中 |
 
 ## おすすめのつながり
 
@@ -35,8 +47,13 @@ Goでバックエンドの設計パターンを小さく実装し、ローカル
 2. `reliable-event-consumer`でOutboxの反対側にある重複受信とInboxを学ぶ。
 3. `saga-compensation`で複数サービスにまたがる失敗と補償へ進む。
 4. `postgres-performance-lab`、`cache-consistency`、`flash-sale-inventory`でDBと高負荷時の挙動を深める。
-5. `cqrs-order-projection`と`event-sourced-ledger`で非同期read modelと履歴中心の設計を比較する。
-6. `ranked-team-matchmaking`、`ecommerce-recommendation`、`partition-key-design`でアルゴリズムと分散を組み合わせる。
+5. `distributed-job-scheduler`と`resilient-http-client`でbackground処理と外部通信の共通基盤を作る。
+6. `webhook-delivery`と`resumable-file-processing`で信頼できない外部境界とobject処理を学ぶ。
+7. `online-schema-migration`と`multi-tenant-data-isolation`で稼働中DBの変更とdata securityを学ぶ。
+8. `cqrs-order-projection`、`event-sourced-ledger`、`cdc-projection-pipeline`でread modelを作る3つの方法を比較する。
+9. `postgres-search-autocomplete`、`game-leaderboard`、`websocket-presence`でproduct機能向けのread/query modelを作る。
+10. `feature-flag-service`と`tamper-evident-audit-log`で安全なreleaseと運用証跡を扱う。
+11. `ranked-team-matchmaking`、`ecommerce-recommendation`、`partition-key-design`でアルゴリズムと分散を組み合わせる。
 
 これは固定順ではありません。各READMEが独立した入口なので、気になったworkspaceのSection 1から始められます。
 
@@ -53,12 +70,5 @@ Goでバックエンドの設計パターンを小さく実装し、ローカル
 ### Spanner固有のhot spot対策
 
 AWS中心という今回の範囲からは外し、移植可能な「単調増加key、tenant hot key、shard suffix、fan-in read、順序と分散のtrade-off」を`partition-key-design`でDynamoDB/Kinesis上に再構成します。kumoは実AWSのcapacity throttlingを再現しないため、partition分布を計測する決定論的テストを証拠にします。
-
-## 将来追加する候補
-
-- lease、leader election、fencing tokenを使うdistributed scheduler
-- 署名、retry、delivery logを持つwebhook delivery platform
-- PostgreSQL logical replication/CDCからread modelを作るpipeline
-- multi-tenant databaseのrow-level securityとnoisy neighbor対策
 
 候補を追加するときも、外部登録なしで最終挙動をテストできるかを先に判定します。

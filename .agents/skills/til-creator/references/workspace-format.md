@@ -11,7 +11,7 @@ Include these parts:
    - State that the directory intentionally contains only the README at creation time.
 2. **Learning contract**
    - The learner types implementation and tests.
-   - Codex presents reference code, reviews work, runs tests, and updates learning documentation.
+   - Codex creates only the empty files needed for the current micro-step, presents reference code in chat, reviews learner-written work, runs tests, and updates learning documentation.
 3. **Outcome**
    - Describe the final behavior in observable terms.
 4. **Scope and non-goals**
@@ -40,6 +40,18 @@ Include these parts:
 
 At workspace creation, do not include the active Section's Go answer. The learner should be able to start by reading the problem, making a choice, and asking Codex to begin or clarify.
 
+## Orientation before Section 1
+
+Before creating the first Section file or presenting its reference code, explain the whole learning path in chat. The explanation must include:
+
+- the total number of Sections;
+- for every Section, the behavior implemented, the main idea being practiced, and the decisive test;
+- the final end-to-end scenario that joins the Sections together;
+- every external system, why it is needed, and the Section where it first appears; and
+- which later details remain provisional until earlier design choices are exercised.
+
+The README roadmap remains the source of truth for progress. The chat orientation should make that roadmap understandable before implementation begins, without expanding future Sections into code or files.
+
 ## Roadmap states
 
 Use exactly these states:
@@ -58,11 +70,12 @@ Keep the expanded Section focused:
 - **Learn:** the minimum concepts needed for that problem.
 - **Decide:** choices the learner should make consciously.
 - **Build:** a short ordered list of learner-written artifacts.
+- **Current micro-step:** the one empty file being prepared now and the behavior it will establish.
 - **Tests:** behaviors and edge cases, expressed without overfitting function names.
 - **Done when:** observable completion conditions and the exact verification command when known.
 - **Notes/evidence:** initially empty; later record decisions and concise test results.
 
-When the learner requests reference code, add it after the conceptual task, alongside the relevant tests. Avoid expanding later Sections at the same time.
+When the learner begins a micro-step, create only its missing target file as a zero-byte file. Present the proposed code and its purpose in chat rather than filling the file. For test-driven work, observe the intended failing test before preparing and explaining the implementation file. Avoid expanding later Sections at the same time.
 
 ## Advancing a Section
 

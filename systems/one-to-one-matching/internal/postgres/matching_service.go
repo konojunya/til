@@ -33,6 +33,10 @@ func (s *MatchingService) SendLike(ctx context.Context, sender, receiver matchin
 	var result matching.SendLikeResult
 
 	err := s.transactor.WithinTransaction(ctx, func(repo *Repository) error {
+		if err := repo.LockMatchingPair(ctx, sender, receiver); err != nil {
+			return err
+		}
+
 		service := matching.NewService(repo)
 		sendLikeResult, err := service.SendLike(ctx, sender, receiver)
 		if err != nil {

@@ -1,21 +1,23 @@
 ---
 name: til-creator
-description: Create or continue small, test-driven Go system-design learning workspaces in this TIL repository when Codex should prepare empty files and explain reference code in chat while the learner types every file body themselves.
+description: Create or continue small, test-driven Go system-design learning workspaces in this TIL repository where Codex writes and explains tests, then guides the learner through implementing the production code in small verified steps.
 ---
 
 # TIL Creator
 
 Guide a Go system from a documented design to an executable, test-verified learning artifact, one Section at a time.
 
-## Preserve learner ownership
+## Divide test and implementation ownership
 
-- The learner types the contents of every implementation, test, schema, migration, and runtime configuration file.
-- Codex may create directories and zero-byte files for the active micro-step. It must not place code, comments, package declarations, configuration, or placeholders in those files.
-- Codex presents the proposed code in the current chat response together with a small explanation of what will be implemented, why the system needs it, and which behavior the code should prove.
-- Create only the empty file or files needed for the current micro-step. Do not scaffold future Sections or fill several layers in advance.
-- Codex may create and update the workspace `README.md`, inspect learner-written files, and run read-only verification commands. Keep the README focused on system design, progress, decisions, and evidence; use chat as the default place for full reference code.
-- Apply a later, explicit change to this learning contract only when the learner clearly asks to change it. Do not infer permission from requests such as `次へ`, `直し方を教えて`, or `テストして`.
-- Never hide a modification in a formatter, generator, or shell command.
+- Codex writes the test code, test helpers, and test-only fixtures for the active micro-step directly into the workspace.
+- Before writing a test, explain what behavior it protects, why the system needs that behavior, what failure is expected now, and what production implementation will be needed next.
+- After writing the test, explain its important setup and assertions, then run the narrowest useful command and confirm the intended Red. A test harness mistake or unrelated compile failure is not the intended Red; Codex may correct test code it authored until the failure expresses the missing behavior.
+- The learner types production implementation, schema, migration, and runtime configuration bodies. Codex presents the smallest useful implementation code in chat, explains what it does and why it is needed, and may create only the corresponding zero-byte production file when it does not yet exist.
+- After the learner implements the code, Codex inspects it and runs the relevant test. Report concrete evidence and explain any gap; do not silently repair learner-owned production code.
+- Generated artifacts may be produced by the documented generator after the learner writes their source files. Do not manually edit generated files or hide production changes in a formatter, generator, or shell command.
+- Keep exactly one active behavior at a time. Do not scaffold future Sections or fill several layers in advance.
+- Codex may create and update the workspace `README.md`. Keep it focused on system design, progress, decisions, and evidence; keep full implementation reference code in chat by default.
+- Apply a later change to this learning contract only when the learner explicitly asks for it.
 
 ## Choose the operating mode
 
@@ -50,15 +52,18 @@ Do not start the first micro-step until this orientation has been delivered.
 Use this mode for questions, requests for sample code, or implementation review within the current Section.
 
 - Inspect the current README and relevant learner-written files before answering.
-- Split the Section into test-first micro-steps. Ordinarily create the empty test file and present its code first; create the empty implementation file only after the intended failing test has been observed.
-- Before creating a file, verify that it does not already exist. Never truncate or replace a learner-written file.
-- After creating an empty file, confirm that it is zero bytes. In the same response, name that file and explain what goes in it, why it is needed, and what behavior it will establish.
-- Present the smallest useful reference code directly in chat. Label it as code for the learner to type, not as content already written to disk.
+- Split the Section into test-first micro-steps using this loop:
+  1. Explain the behavior being tested, why it matters, the expected Red, and the implementation boundary it will drive.
+  2. Create or edit only the active test file and any necessary test-only helper. Preserve unrelated learner test changes.
+  3. Explain the test arrangement and assertions, run the targeted test, and confirm that the failure demonstrates the missing behavior.
+  4. Explain what production code will be implemented next and why, then present the smallest useful reference code directly in chat for the learner to type.
+  5. Inspect the learner's implementation, run the targeted test, and explain the observed Green or remaining gap.
+- Before creating a production file, verify that it does not already exist. Never truncate or replace a learner-written production file. If a new production file is needed, create it as zero bytes and confirm that it is empty before presenting its code.
 - Keep alternatives short. Explain the tradeoff that would cause the learner to choose another approach.
 - Scope verification to the active Section. Report exact passing or failing evidence without editing the learner's code.
 - Update the README only when it records a decision, correction, evidence, or Section progress useful to later study.
 
-When a micro-step is complete, inspect what the learner typed before introducing the next file. Do not repeat the full implementation code in the README unless the learner explicitly asks to preserve it there.
+When a micro-step is complete, record its test evidence before introducing the next behavior. Do not repeat full test or implementation code in the README unless the learner explicitly asks to preserve it there.
 
 ### Advance to the next Section
 

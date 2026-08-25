@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	sqldb "github.com/konojunya/til/systems/one-to-one-matching/internal/postgres/db"
 )
 
 type OutboxEvent struct {
@@ -13,16 +15,11 @@ type OutboxEvent struct {
 }
 
 func (r *Repository) SaveOutboxEvent(ctx context.Context, event OutboxEvent) error {
-	_, err := r.db.Exec(
-		ctx,
-		`
-		INSERT INTO outbox_events (id, event_type, payload)
-		VALUES ($1, $2, $3::jsonb)
-		`,
-		event.ID,
-		event.EventType,
-		event.Payload,
-	)
+	err := r.queries.SaveOutboxEvent(ctx, sqldb.SaveOutboxEventParams{
+		ID:        event.ID,
+		EventType: event.EventType,
+		Payload:   event.Payload,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to insert outbox event: %w", err)
 	}

@@ -3,13 +3,14 @@
 マッチングアプリ型の「相互に好意を示した 2 人を 1 組の Match にする」仕組みを、Go とテストで小さく組み立てる学習用ワークスペースです。
 
 - Workspace status: `in_progress`
-- Active Section: `none — Section 4 complete; Section 5 not started`
+- Active Section: `Section 6 — HTTP境界`
 - Current files: `README.md`, `go.mod`, `go.sum`, learner-written Go files under `internal/matching` and `internal/postgres`, `compose.yaml`, migrations under `migrations`
 
 ## 学習の進め方
 
-- 実装コード、テスト、SQL、Docker 設定は自分で入力する。
-- AI は現在のマイクロステップに必要な空ファイルを作り、考え方と参考コードを会話に提示する。ファイル内容は自分で入力する。
+- AIが現在の振る舞いを固定するテストコードを書き、何を守るテストか、なぜ必要か、どの失敗を期待するかを説明する。
+- 意図したRedを確認した後、AIが次に必要な実装と理由を小さく説明し、参考コードを会話に提示する。実装コード、SQL、migration、runtime設定は自分で入力する。
+- 実装後はAIがコードを確認して対象テストを実行し、Greenまたは残っている差分を説明する。
 - 各 Section の完了条件をテストで確認してから、次の Section を 1 つだけ開く。
 - `次の Section へ` と依頼されたとき、AI は現在のコードとテスト結果を確認する。未完了なら修正せず、観測した差分とヒントを返す。
 - 最後はコンパイルではなく、公開境界から永続化・非同期イベントまでの振る舞いをテストで再現する。
@@ -148,6 +149,7 @@ SQS Standard Queue は at-least-once delivery であり、重複受信の可能�
 one-to-one-matching/
 ├── README.md
 ├── go.mod
+├── sqlc.yaml
 ├── compose.yaml
 ├── cmd/
 │   ├── api/
@@ -160,6 +162,13 @@ one-to-one-matching/
 │   │   ├── service.go
 │   │   └── *_test.go
 │   ├── postgres/
+│   │   ├── query/
+│   │   │   ├── matching.sql
+│   │   │   └── outbox.sql
+│   │   ├── db/                 # sqlc generated; manual edit禁止
+│   │   │   ├── db.go
+│   │   │   ├── models.go
+│   │   │   └── *.sql.go
 │   │   ├── repository.go
 │   │   └── repository_test.go
 │   ├── httpapi/
@@ -170,7 +179,7 @@ one-to-one-matching/
 │       └── publisher_test.go
 ├── migrations/
 │   ├── 001_init.up.sql
-│   └── 001_init.down.sql
+│   └── 002_create_outbox_events.up.sql
 └── test/
     └── e2e/
         └── matching_test.go
@@ -184,8 +193,8 @@ one-to-one-matching/
 | 2. メモリ上の相互 Like | `complete` | 状態遷移、Repository 境界、table-driven test | DB を使わない最小 matching service | 片方向では未成立、相互で 1 件、再送で増えない |
 | 3. PostgreSQL の制約 | `complete` | schema、migration、DB が守る不変条件 | Docker PostgreSQL と初期 migration | 不正 Like・重複 Like・重複 Match を DB が拒否 |
 | 4. 永続化と transaction | `complete` | Repository、atomicity、rollback | PostgreSQL 版 `SendLike` | 逆 Like で Match と Outbox が同時に作られる |
-| 5. 冪等性と並行実行 | `locked` | race、lock/constraint、retry | 競合に耐える use case | 多数の同時実行後も Like・Match・event が各 1 件 |
-| 6. HTTP 境界 | `locked` | transport と domain の分離、status code | Like API と Match query API | HTTP 入力から DB の結果まで検証 |
+| 5. sqlc移行と並行実行 | `complete` | SQL-first data access、DB concurrency、lock/retry境界 | sqlc生成Queriesを使う競合耐性use case | 生成差分なし、同時実行後も両方向Like 2件、Match・event各1件 |
+| 6. HTTP 境界 | `active` | transport と domain の分離、status code | Like API と Match query API | HTTP 入力から DB の結果まで検証 |
 | 7. Transactional Outbox と SQS | `locked` | dual write、at-least-once、再試行 | kumo SQS publisher | キュー停止中の event が復旧後に配信される |
 | 8. システム E2E | `locked` | component 接続、観測可能な完了条件 | 最終シナリオテスト | HTTP→PostgreSQL→kumo SQS を実物で通す |
 
@@ -675,6 +684,194 @@ Section 2で分かれていた`SaveLike`、逆Like検索、`SaveMatch`、Outbox�
 - 2026-08-25: 空のevent IDで`outbox_events_id_not_empty` CHECK violationを発生させ、error chainにSQLSTATE `23514`を保持しつつ、そのtransactionの逆方向Like、Match、Outboxが0件へrollbackされ、先にcommit済みの片方向Likeだけが1件残ることを確認した。
 - 2026-08-25: Section 4完了確認としてunit、unit race、integration、integration race、通常・integrationのvet、`gofmt`を実行し、すべてGreen。PostgreSQL版`SendLike`でLike、Match、Outboxのcommit/rollbackと再送時の冪等性を実DBで証明した。
 
+## Completed Section — Section 5: sqlc移行と並行実行
+
+### Question
+
+普段使うsqlcのSQL-firstな書き味へRepositoryを移行しつつ、`A→B`と`B→A`がほぼ同時に別transactionへ到着したとき、両方のLikeは保存されたのに、互いの未commit Likeを見られずMatchを作らない状態をどう防ぐでしょうか。同方向の大量再送でもLike、Match、Outboxを増殖させず、複数processで同じ結果を保つにはどのDB concurrency controlが必要でしょうか。
+
+### Learn
+
+- `sqlc.yaml`、migration schema、named queryをsource of truthとしてpgx/v5対応Go codeを生成する流れ
+- sqlc生成の`DBTX`、`Queries`、parameter/result struct、table modelがそれぞれ持つ役割
+- 生成されたDB modelと、`matching.UserID`・`matching.Pair`などdomain modelを同一視せずRepositoryで変換する理由
+- sqlcの`Queries.WithTx(tx)`で、同じgenerated query setをpoolとtransactionの両方へ束縛する方法
+- Goのrace detectorが検出するメモリ上のdata raceと、PostgreSQL上のserialization anomalyの違い
+- 単一の`pgx.Conn`と、複数transactionを並行実行できる`pgxpool.Pool`の役割の違い
+- PostgreSQLのRead Committedではstatementごとにsnapshotが作られ、他transactionの未commit行は見えないこと
+- PRIMARY KEYと`ON CONFLICT DO NOTHING`は重複を防げても、相互LikeからMatchを作り損ねるwrite skewまでは防げないこと
+- 正規化したPairを競合単位にするtransaction-level advisory lockと、Serializable transaction + SQLSTATE `40001` retryのtrade-off
+- goroutineの開始を揃え、最終DB状態と返り値の両方を繰り返し検証するconcurrency integration test
+
+### Decide
+
+- sqlcはGo 1.24以降の`tool` directiveでmoduleへversion固定し、`go tool sqlc generate`と`go tool sqlc vet`で実行する。現在の基準versionは公式latest docsと一致する`v1.31.1`とする。
+- 設定はversion 2、engineはPostgreSQL、`sql_package`は既存driverと同じ`pgx/v5`、schema inputは`migrations`、query inputは`internal/postgres/query`、生成先は`internal/postgres/db`とする。
+- learnerが手で書くsourceは`sqlc.yaml`と`.sql` queryであり、`internal/postgres/db`以下のgenerated Goは手編集しない。生成結果はrepositoryへcommitし、generate後に差分が出ないことを検証する。
+- sqlc生成modelはDB表現として扱い、Section 1・2のdomain型とbusiness ruleは`internal/matching`に残す。`Repository`はgenerated Queriesを呼ぶadapterとして維持する。
+- Section 4で手書きしたSQLを先にnamed queryへ移し、既存integration testを一切弱めずGreenへ戻してから、新しいconcurrency queryとtestへ進む。
+- Section 4の既存SQLをnamed queryへ移す作業は新しいsystem behaviorを追加しないrefactoringなので、query追加とcode generationをまとめて進める。新しい並行制御はtest-firstの小さいstepへ戻す。
+- concurrencyの正しさはprocess内の`sync.Mutex`へ依存せず、複数instanceで共有できるPostgreSQL側の仕組みで守る。
+- concurrency testは`pgxpool.Pool`を使い、実際に複数connection・複数transactionを同時に動かす。
+- まず現在のRead Committed実装で相互Likeの取りこぼしを再現し、そのRedを解消する最小の競合制御を選ぶ。
+- 競合単位は入力方向ではなく、Section 1で正規化した同一Pairとする。
+- concurrency Redの後、同じPairだけを直列化しtransaction終了時に自動解放されるtransaction-level advisory lockを採用する。Serializable + bounded retryは、transaction全体の再実行とevent ID再生成の扱いが増えるため今回は採用しない。
+- advisory lock keyは入力方向に依存しないようSQLの`LEAST`/`GREATEST`でID順を揃え、2つの`hashtext`を`pg_advisory_xact_lock(integer, integer)`へ渡す。hash collisionは無関係なPairを余分に直列化し得るが、不正なMatchは作らない。
+- PRIMARY KEYと`ON CONFLICT DO NOTHING`は、選んだ競合制御とは別に最後の重複防止線として残す。
+- test内のevent ID生成回数はatomicに計測し、test code自身のdata raceを`go test -race`で検出できるようにする。
+- 共有fixtureを使うtest関数自体には`t.Parallel()`を付けず、1つのtest内部で明示的にgoroutineを同期する。
+
+### Design decision — Pair単位のtransaction-level advisory lock
+
+#### Status
+
+`Accepted`（2026-08-25）
+
+#### Context: 制約だけでは防げなかった取りこぼし
+
+PostgreSQLのデフォルトであるRead Committedでは、通常の`SELECT`はstatement開始前にcommitされたデータだけを見る。別transactionの未commit行は見えないため、次の順序が成立し得る。
+
+```text
+Transaction 1                         Transaction 2
+INSERT Alice → Bob                    INSERT Bob → Alice
+HasLike(Bob → Alice) = false          HasLike(Alice → Bob) = false
+COMMIT                                COMMIT
+```
+
+この結果、両方向Likeは2件残るが、MatchとOutboxは0件になる。likesとmatchesのPRIMARY KEY、`ON CONFLICT DO NOTHING`は重複を防げても、「相互Likeを見つけてMatchへ進める」状態遷移の欠落までは防げない。
+
+`concurrency_test.go`では、2つのconnectionを使い、pgx query tracerで両transactionを`HasLike`直前に揃えた。lock導入前はLike 2件、Match 0件、Outbox 0件、event ID生成0回となるRedを再現した。
+
+#### Decision
+
+`SendLike` transactionの先頭で、方向を持たない同一Pairを表すexclusiveなtransaction-level advisory lockを取得する。
+
+```sql
+SELECT pg_advisory_xact_lock(
+    hashtext(LEAST(
+        sqlc.arg(first_user_id)::text,
+        sqlc.arg(second_user_id)::text
+    )),
+    hashtext(GREATEST(
+        sqlc.arg(first_user_id)::text,
+        sqlc.arg(second_user_id)::text
+    ))
+);
+```
+
+- `LEAST`/`GREATEST`により、`Alice → Bob`と`Bob → Alice`を同じlock keyへ正規化する。
+- 2つの`hashtext`を`pg_advisory_xact_lock(integer, integer)`のapplication-defined keyとして使う。
+- 先に取得したtransactionだけがLike保存と逆Like検索へ進み、もう一方は同じkeyのlock解放まで待機する。
+- lockは未commitデータを見えるようにするものではない。2本目のtransactionを1本目のcommit後まで待たせ、Read Committedの次のstatement snapshotからcommit済みLikeを見えるようにする。
+- `xact` lockはcommitまたはrollbackで自動解放されるため、明示的なunlockは行わない。
+- Match作成とOutbox保存を含む現在のtransaction境界全体でlockを保持する。
+
+#### Alternatives considered
+
+| 選択肢 | Pros | Cons / 今回採用しなかった理由 |
+| --- | --- | --- |
+| PostgreSQLのPRIMARY KEYと`ON CONFLICT`だけ | 実装が単純で、重複行を確実に防げる | 重複は防げるが、互いの未commit Likeを見失ってMatchを作らない問題は解決しない |
+| Goの`sync.Mutex` | 小さく実装でき、単一process内では分かりやすい | processごとにlockが分かれるため、複数instanceや別workerからの同時実行を守れない |
+| users行を`SELECT FOR UPDATE` | PostgreSQL標準の行lockで、hash keyを作らなくてよい | Pair専用行がまだ存在せず、user行をlockすると同じuserを含む別Pairまで広く直列化する |
+| Serializable transaction + SQLSTATE `40001`のbounded retry | 個別のlock規約を持たず、より一般的なserialization anomalyを検出できる | transaction全体の再実行、retry上限・backoff、context cancellation、event ID再生成回数の設計が必要になる。今回のPair競合だけには複雑さが大きい |
+| Pair単位のtransaction-level advisory lock | schemaにlock用行を追加せず、同じPostgreSQLを使う複数process間でPairだけを直列化できる | applicationの全書き込み経路が同じlock規約を守る必要があり、待機中はDB connectionを占有する |
+
+#### Why this option
+
+今回守りたい競合単位は明確に1つのPairであり、transaction全体を一般的にretryする必要はまだない。advisory lockなら既存のRead CommittedとTransactional Outboxを維持したまま、Like保存より前に1回lockを取得するだけで状態遷移を直列化できる。
+
+また、lockをPostgreSQLに置くためGo process内のmutexと異なり、同じDBへ接続するAPI instanceやworkerが増えても同じkeyで競合できる。Match行がまだ存在しない時点でも、application-defined keyなら「これから作るかもしれないPair」をlockできる。
+
+#### Pros
+
+- 同じPairだけを直列化し、異なるPairは並行処理できる。
+- 複数process・複数application instanceで共有できる。
+- lock管理用tableやmigrationを追加しなくてよい。
+- commit/rollback時に自動解放され、session-level lockの解放漏れを避けられる。
+- transaction retryを導入しないため、event ID生成やcallback副作用の再実行を考えなくてよい。
+- PRIMARY KEY、CHECK、transaction、Outboxの既存防御をそのまま最後の安全線として残せる。
+
+#### Cons and operational risks
+
+- advisory lockはPostgreSQLが利用を強制しない。将来別のMatch作成経路を追加する場合も、同じPair lockをtransaction先頭で取得する規約が必要になる。
+- hotなPairへのリクエストは待ち行列になり、待機中のtransactionがconnection poolを消費する。
+- `hashtext` collisionでは無関係なPairが同じkeyになり、正しさは壊れないが不要な直列化が起きる可能性がある。
+- 1transactionで複数のadvisory lockを取得する設計へ拡張すると、取得順が一定でなければdeadlockの原因になる。
+- この可視性の説明は、statementごとにsnapshotを更新するRead Committedを前提にする。Repeatable Readへ変更する場合は同じ設計を再評価する。
+- lock待機時間には上限がないため、request context、statement timeout、pool待機時間、`pg_locks`を使った監視が必要になる。
+
+#### Revisit when
+
+- Match処理を複数DBやmulti-primary構成へ分散し、1つのPostgreSQL lock managerを共有できなくなる。
+- Pairごとの競合が多く、lock待機時間やpool枯渇が実運用上の問題になる。
+- 1transactionで複数Pairや複数aggregateを更新する必要が生じ、lock順序が複雑になる。
+- isolation levelをRepeatable ReadまたはSerializableへ変更する。
+- Pair競合以外のserialization anomalyもまとめて扱う必要が生じ、bounded retryの方が一貫した設計になる。
+
+#### Verification
+
+- Before: 両方向Like 2件、Match 0件、Outbox 0件、event ID生成0回のRed。
+- After: 両方向Like 2件、Match 1件、Outbox 1件、event ID生成1回のGreen。
+- 回帰test: `TestMatchingServiceConcurrentMutualLikesCreateOneMatchAndOutbox`。
+
+### Build
+
+1. `go get -tool`でsqlcをmoduleへ固定し、version 2の`sqlc.yaml`、query directory、生成先を用意する。
+2. Section 4の`SaveLike`、`HasLike`、`SaveMatch`、`SaveOutboxEvent`をnamed queryとして自分で書き、`go tool sqlc generate`でpgx/v5用Queriesとmodelを生成する。
+3. 手書き`DBTX`とraw SQLをgenerated Queriesへ置き換え、`WithTx`を使うtransaction-bound Repositoryへ移行する。既存Section 4 integration testをすべてGreenへ戻す。
+4. `pgxpool.Pool`を使うconcurrency integration testの接続・fixture helperを用意し、同じPairへの逆方向Like同時実行で現在の取りこぼしを観測する。
+5. Pair単位のtransaction-level advisory lockとSerializable + retryを比較し、採用した競合制御SQLもsqlc named queryとして追加する。
+6. 選んだ競合制御を`SendLike` transactionの先頭へ組み込み、逆方向Likeを直列化または安全にretryする。
+7. 同方向の大量再送と両方向の混在実行後に、Like、Match、Outbox、event ID生成回数が増殖しないことを確認する。
+8. `sqlc generate`の生成差分、`sqlc vet`、integration testの`-race`と複数回実行を通し、hang、deadlock、flaky failureがない基準を作る。
+
+### Completion verification
+
+- `go tool sqlc generate`前後のgenerated file hashが`81e70e8eac1d54bb0d55b5221c53d8e763bddf3e`で一致した。
+- `go tool sqlc vet`、`go test ./...`、通常・integration build tagの`go vet`が成功した。
+- 実PostgreSQLに対するintegration testが成功し、`go test -race -count=10 -tags=integration ./internal/postgres`も19.834秒で成功した。
+
+### Tests
+
+- `go tool sqlc generate`後にgenerated directoryへ未反映差分がなく、`go tool sqlc vet`が成功する。
+- sqlc移行前からあるSection 4のRepository、transaction、Outbox、application service integration testが同じ期待値で成功する。
+- 同方向Likeを多数同時送信しても、その方向のLikeは1件だけでMatchとOutboxは作られない。
+- `A→B`と`B→A`を同時送信した後、両方向Like 2件、Match 1件、pending Outbox 1件だけが存在する。
+- 同じPairへ両方向・重複を混在させても、MatchとOutbox eventは各1件から増えない。
+- 競合待ちまたはretryがcontext cancellationを無視せず、transactionやconnectionを残さない。
+- concurrency integration testが`-race`と複数回実行で安定して成功する。
+
+### Done when
+
+- PostgreSQL accessのSQLが`internal/postgres/query`へ集まり、Repository implementationに手書きquery literalが残らない。
+- generated Goを手編集せず、moduleに固定した`go tool sqlc`から同じcodeを再生成できる。
+- sqlc generated Queriesがpool直下と`WithTx`の両方で使われ、Section 4のatomicity testがすべて維持される。
+- 複数connectionから同時に逆方向Likeを送ってもMatchを取りこぼさない。
+- 同方向・両方向の重複リクエスト後もDBの件数が不変条件どおりになる。
+- 競合制御がGo process内のmutexに依存せず、PostgreSQLを共有する複数instanceで機能する。
+- lockまたはretryの範囲と失敗時の戻り方がtestで明示される。
+- `go test -race -count=10 -tags=integration ./internal/postgres`が安定して成功する。
+
+### Notes / evidence
+
+- 2026-08-25: Section 4をcommit `3188060`として完了し、Section 5を開始。実装ファイルはまだ作らず、Read Committedで起こり得る相互Likeの取りこぼし、poolを使う並行test、Pair単位lockとSerializable retryの比較範囲を定めた。
+- 2026-08-25: learnerが普段使うsqlcの書き味へSection 5で移行する方針を追加。Go `1.26.3`のmodule tool dependency、sqlc `v1.31.1`のversion 2 config、pgx/v5生成、`WithTx`が公式に利用できることを確認した。sqlc移行でSection 4のtestを維持してからconcurrency Redへ進む。
+- 2026-08-25: sqlc移行の最初のsourceとしてzero-byteの`sqlc.yaml`と`internal/postgres/query/matching.sql`を作成。最初は`SaveLike :execrows`だけを生成し、既存RepositoryのRowsAffected semanticsとgenerated methodの対応を観察する。
+- 2026-08-25: sqlc `v1.31.1`をmodule toolとして固定し、pgx/v5用の`SaveLike(ctx, SaveLikeParams) (int64, error)`とDB modelを生成。再生成差分なし、`sqlc vet`、通常test、実PostgreSQLを使うSection 4 integration testのGreenを確認した。
+- 2026-08-25: `SELECT EXISTS`を`HasLike :one`として追加し、`HasLike(ctx, HasLikeParams) (bool, error)`を生成。0件または複数候補をboolean 1行へ集約する意図が生成コメントにも反映され、再生成一致、`sqlc vet`、通常test、integration testのGreenを確認した。
+- 2026-08-25: 既存SQLのsqlc移行はsystem behaviorを変えないrefactoringとして、query追加とgenerateを一括で進める方針へ変更。Outbox query用のzero-byte `internal/postgres/query/outbox.sql`を作成した。
+- 2026-08-25: `SaveMatch`と`SaveOutboxEvent`をまとめて生成し、`sqlc vet`、通常test、integration testのGreenを確認。ただし`$3::jsonb`はparameter名を推論できず`Column3 []byte`となったため、`sqlc.arg(payload)`でAPI名を補正してからquery set完成とする。
+- 2026-08-25: Outbox queryの全parameterを`sqlc.arg`で命名し、`SaveOutboxEventParams`が`ID`、`EventType`、`Payload`として生成されることを確認。4つのqueryが揃い、再生成一致、`sqlc vet`、通常test、integration testがGreenとなった。
+- 2026-08-25: RepositoryとOutbox保存をgenerated `db.Querier`呼び出しへ移し、adapter内のraw SQLと手書き`DBTX`を削除。通常・integration testと両方の`go vet`がGreenとなり、domain型からsqlc parameter型への変換境界をRepositoryに残した。
+- 2026-08-25: generated `Queries.WithTx(tx)`をTransactorへ接続。`Querier`はRepositoryの呼び出し境界、具体型`*Queries`は`WithTx`を持つtransaction境界として使い分け、再生成一致、sqlc vet、通常・integration test、Go vetがGreenとなった。sqlc移行を完了し、zero-byteの`internal/postgres/concurrency_test.go`を作成した。
+- 2026-08-25: 学習フローを、AIがテストを実装・説明してRedを作り、人間が提示コードを基にproduction実装し、AIがGreenを確認するマイクロステップへ変更した。
+- 2026-08-25: AIがpgx query tracerで2つの`HasLike`を同期するconcurrency integration testを実装。両方向Likeは保存された一方、`MatchCreated`、matches、Outbox、event ID生成がすべて0となる意図したRedを確認し、Pair単位のtransaction-level advisory lockを採用した。zero-byteの`internal/postgres/locking.go`を作成した。
+- 2026-08-25: learnerが方向非依存の2-part advisory lock key、generated `LockMatchingPair`、transaction先頭のlock取得を実装。concurrency testはGreenとなり、両方向Like 2件、Match 1件、Outbox 1件、event ID生成1回を確認した。再生成一致、sqlc vet、既存integration test、通常testもGreenとなった。
+- 2026-08-25: AIが同方向のLikeを32件同時送信するconcurrency integration testを追加。全requestが成功し、`LikeCreated`は1回、Likeは1件だけとなり、Match、Outbox、event ID生成はいずれも0のGreenを確認した。Pair lockが同一Pairの処理順を揃え、Likeの複合primary keyと`ON CONFLICT DO NOTHING`が永続化層の最終的な重複防止を担う。
+- 2026-08-25: AIが`A→B`と`B→A`を各16件ずつ同時送信するconcurrency integration testを追加。32 requestが成功し、`LikeCreated`は2回、`MatchCreated`は1回、DBはLike 2件、Match 1件、Outbox 1件、event ID生成1回へ収束するGreenを確認した。Matchのprimary keyだけでなく、`SaveMatch`のcreated結果を条件にOutboxを保存する境界もevent重複を防いでいる。
+- 2026-08-25: AIが別transactionでPair lockを保持し、100ms timeout付き`SendLike`を待機させるintegration testを追加。`context.DeadlineExceeded`で中断され、Like、Match、Outbox、event ID生成はいずれも0、1 connectionに制限したpoolを直後に再利用できるGreenを確認した。待機queryのcontext cancellationと、error pathでのdeferred rollbackがconnectionを返却することを検証した。
+- 2026-08-25: sqlc再生成前後のhash一致、`sqlc vet`、通常test、実PostgreSQL integration test、通常・integrationのGo vetを確認。race detector付きintegration suiteを10回反復して19.834秒で成功し、hang、deadlock、flaky failureがない基準を満たしたためSection 5を完了した。
+
 ## 最終 acceptance criteria
 
 最終 Section では、少なくとも次を成立させます。コマンド名は構成確定後に README と一致させます。
@@ -701,6 +898,13 @@ go test -count=1 -tags=e2e ./...
 
 - [kumo — lightweight AWS service emulator](https://github.com/sivchari/kumo)
 - [PostgreSQL: Constraints](https://www.postgresql.org/docs/current/ddl-constraints.html)
+- [PostgreSQL 18: Transaction Isolation](https://www.postgresql.org/docs/18/transaction-iso.html)
+- [PostgreSQL 18: Explicit Locking](https://www.postgresql.org/docs/18/explicit-locking.html)
+- [PostgreSQL 18: Advisory Lock Functions](https://www.postgresql.org/docs/18/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS)
+- [sqlc: Getting started with PostgreSQL](https://docs.sqlc.dev/en/latest/tutorials/getting-started-postgresql.html)
+- [sqlc: Using Go and pgx](https://docs.sqlc.dev/en/latest/guides/using-go-and-pgx.html)
+- [sqlc: Using transactions](https://docs.sqlc.dev/en/latest/howto/transactions.html)
+- [Go: Tool dependencies](https://go.dev/doc/modules/managing-dependencies#tools)
 - [Amazon SQS at-least-once delivery](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/standard-queues-at-least-once-delivery.html)
 - [AWS SDK for Go v2](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/getting-started.html)
 - [Go: Add a test](https://go.dev/doc/tutorial/add-a-test)

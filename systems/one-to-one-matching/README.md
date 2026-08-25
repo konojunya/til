@@ -3,8 +3,8 @@
 マッチングアプリ型の「相互に好意を示した 2 人を 1 組の Match にする」仕組みを、Go とテストで小さく組み立てる学習用ワークスペースです。
 
 - Workspace status: `in_progress`
-- Active Section: `none — Section 3 complete; Section 4 not started`
-- Current files: `README.md`, `go.mod`, `go.sum`, learner-written Go files under `internal/matching` and `internal/postgres`, `compose.yaml`, `migrations/001_init.up.sql`
+- Active Section: `none — Section 4 complete; Section 5 not started`
+- Current files: `README.md`, `go.mod`, `go.sum`, learner-written Go files under `internal/matching` and `internal/postgres`, `compose.yaml`, migrations under `migrations`
 
 ## 学習の進め方
 
@@ -127,7 +127,7 @@ SQS Standard Queue は at-least-once delivery であり、重複受信の可能�
 | `users` | `id`, `created_at` | テスト fixture で用意する既知ユーザー |
 | `likes` | `sender_id`, `receiver_id`, `created_at` | 方向あり。組を一意にし、自己 Like を禁止する |
 | `matches` | `user_low_id`, `user_high_id`, `created_at` | 方向なし。常に小さい ID を先に保存し、組を一意にする |
-| `outbox_events` | `id`, `event_type`, `aggregate_key`, `payload`, `occurred_at`, `published_at` | DB commit とイベント発生を結び、未配信を再試行可能にする |
+| `outbox_events` | `id`, `event_type`, `payload`, `occurred_at`, `published_at` | DB commit とイベント発生を結び、未配信を再試行可能にする |
 
 `SendLike(A, B)` の目標トランザクションは次の流れです。
 
@@ -183,7 +183,7 @@ one-to-one-matching/
 | 1. 2 人組の同一性 | `complete` | 値オブジェクト、方向あり/なし、正規化 | `UserID` と順序非依存な `Pair` | A–B と B–A が同一、自己・空 ID を拒否 |
 | 2. メモリ上の相互 Like | `complete` | 状態遷移、Repository 境界、table-driven test | DB を使わない最小 matching service | 片方向では未成立、相互で 1 件、再送で増えない |
 | 3. PostgreSQL の制約 | `complete` | schema、migration、DB が守る不変条件 | Docker PostgreSQL と初期 migration | 不正 Like・重複 Like・重複 Match を DB が拒否 |
-| 4. 永続化と transaction | `locked` | Repository、atomicity、rollback | PostgreSQL 版 `SendLike` | 逆 Like で Match と Outbox が同時に作られる |
+| 4. 永続化と transaction | `complete` | Repository、atomicity、rollback | PostgreSQL 版 `SendLike` | 逆 Like で Match と Outbox が同時に作られる |
 | 5. 冪等性と並行実行 | `locked` | race、lock/constraint、retry | 競合に耐える use case | 多数の同時実行後も Like・Match・event が各 1 件 |
 | 6. HTTP 境界 | `locked` | transport と domain の分離、status code | Like API と Match query API | HTTP 入力から DB の結果まで検証 |
 | 7. Transactional Outbox と SQS | `locked` | dual write、at-least-once、再試行 | kumo SQS publisher | キュー停止中の event が復旧後に配信される |
@@ -595,6 +595,85 @@ go test ./...
 - 2026-08-25: 自己LikeをCHECK、同方向重複を複合PRIMARY KEYが拒否し、逆方向Likeは2件目として保存できることを確認した。
 - 2026-08-25: 自己Matchと逆順Matchを`matches_users_ordered`、正規順Pairの重複を`matches_pkey`が拒否することを確認した。integration/unit test、vet、`gofmt`は成功したが、`go mod tidy -diff`で未整理差分を検出した。
 - 2026-08-25: `go mod tidy`後の差分なしを確認。unit/integrationのrace・shuffle各10回、integrationを含むvet、全Goファイルの`gofmt`、Compose構文とPostgreSQL healthが成功し、Section 3を完了した。
+
+## Completed Section — Section 4: 永続化と transaction
+
+### Question
+
+Section 2で分かれていた`SaveLike`、逆Like検索、`SaveMatch`、Outbox記録を、PostgreSQL上でどこまで1つのtransactionとして扱えば、途中失敗でも部分的なMatchを残さずに済むでしょうか。
+
+### Learn
+
+- `pgx.Tx`とconnection poolの役割の違い
+- Repositoryを特定のtransactionへ束縛する`DBTX` interface
+- `INSERT ... ON CONFLICT DO NOTHING`で作成有無を返す方法
+- use case全体をtransactionで囲み、commitとrollbackを1か所で決める方法
+- MatchとOutbox eventを同じtransactionへ入れてdual writeを避ける考え方
+- test transactionによる後片付けと、検証対象であるapplication transactionの違い
+
+### Decide
+
+- PostgreSQL accessにはSection 3で追加した`pgx/v5`を使う。
+- Repositoryは`pgx.Tx`とpoolの両方が満たせる小さな`DBTX` interfaceに依存する。
+- Section 2の`matching.Repository`契約と`matching.Service`の状態遷移を再利用し、PostgreSQL用のtransaction境界からtransaction-bound Repositoryを渡す。
+- LikeとMatchの重複は事前SELECTだけで判断せず、Section 3のPRIMARY KEYと`ON CONFLICT DO NOTHING`を使って作成有無を返す。
+- Matchを新規作成した場合だけOutbox eventを記録し、Like、Match、Outboxを同じtransactionでcommitする。
+- Outboxはイベント種類ごとに分けず、Matching ServiceのDB境界に1つの`outbox_events`を置く。今回は1 Matchにつき1つの`match.created`だけなので、aggregate identityはpayloadに保持し、専用の`aggregate_key`列はまだ設けない。
+- 同時実行に対するlock順序やretryはSection 5へ残し、このSectionでは逐次実行と強制失敗時のatomicityを証明する。
+- 共有DBと同じfixture IDを使うintegration testには`t.Parallel()`を付けない。
+
+### Build
+
+1. transaction-bound RepositoryでLikeの保存・重複判定を実装する。
+2. 逆方向Likeの検索と、正規化済みMatchの保存を実装し、`matching.Repository`を満たす。
+3. Outbox event用の追加migrationと最小の保存処理を作る。
+4. callbackを1つの`pgx.Tx`で実行するtransaction境界を作る。
+5. 既存`matching.Service`をtransaction内で実行し、新規Matchに対応するOutbox eventを同時に保存する。
+6. 片方向Like、相互Like、再送、強制エラー時のrollbackを実DBで検証する。
+
+### Completion
+
+- Result: `pgx.Tx`へ束縛したPostgreSQL Repositoryとapplication serviceを実装し、Like、Match、Outboxを1つのtransactionで確定できるようにした。
+- Transaction policy: callback成功時だけcommitし、domain処理またはOutbox保存の失敗時はそのcallback内の全DB操作をrollbackする。Matchを新規作成した場合だけ`match.created`をOutboxへ保存する。
+- Evidence: unit/integration test、両方のrace、通常・integrationのvet、`gofmt`がすべて成功。片方向Like、相互Like、再送、Outbox制約違反時のrollbackを実PostgreSQLで確認した。
+
+### Tests
+
+- PostgreSQL Repositoryが方向付きLikeと正規化済みMatchについてmemory版と同じ作成有無を返す。
+- 一方向LikeのcommitではLikeだけが残り、MatchとOutboxは作られない。
+- 逆方向LikeのcommitでMatchとOutboxが1件ずつ同時に残る。
+- 同じLikeの再送でLike、Match、Outboxが増えない。
+- Outbox保存を強制的に失敗させると、そのtransactionのLikeとMatchも残らない。
+
+### Done when
+
+- PostgreSQL Repositoryが`matching.Repository`を満たす。
+- PostgreSQL版`SendLike`の成功条件がDB transactionのcommitになる。
+- Matchと対応するOutbox eventが片方だけ残らないことをintegration testで証明する。
+- unit testとintegration testが成功し、Section 5の並行実行へ進める逐次実行の基準ができる。
+
+### Notes / evidence
+
+- 2026-08-25: Section 3を`0220de4`としてcommitし、Section 4を開始。既存`matching.Service`を再利用しつつ、その複数Repository操作をPostgreSQL transactionで囲む方針とした。
+- 2026-08-25: PostgreSQL RepositoryのLike保存・重複判定testを入力。`undefined: NewRepository`だけとなる意図したcompile Redを確認し、zero-byteの`internal/postgres/repository.go`を作成した。
+- 2026-08-25: `DBTX`へ束縛したRepositoryと`ON CONFLICT DO NOTHING`による`SaveLike`を実装。初回作成、重複時未作成、DB上1件のintegration testがGreenとなり、`gofmt`差分なしを確認した。
+- 2026-08-25: 保存済みの方向付きLikeだけを見つけ、逆向きは未保存と判定するtestを追加。`repo.HasLike undefined`だけとなる意図したcompile Redを確認した。
+- 2026-08-25: `SELECT EXISTS`で方向付きLikeを検索する`HasLike`を実装。対象が0件でも1件以上でもboolean 1行を返す理由をコードコメントへ記録し、Repository integration test全体のGreenと`gofmt`差分なしを確認した。
+- 2026-08-25: 逆順の入力から正規化したPairを初回だけ保存し、再保存で増えないtestを追加。`repo.SaveMatch undefined`だけとなる意図したcompile Redを確認した。
+- 2026-08-25: Pairのlow/highを`ON CONFLICT DO NOTHING`で保存する`SaveMatch`を実装。Repository integration test全体、ドメインunit test、`gofmt`がGreenとなり、zero-byteの`internal/postgres/outbox_test.go`を作成した。
+- 2026-08-25: 未配信の`match.created`を保存してpayloadとpending状態を読めるschema testを入力。`relation "outbox_events" does not exist`となる意図したdatabase Redを確認し、zero-byteの`migrations/002_create_outbox_events.up.sql`を作成した。
+- 2026-08-25: 汎用`outbox_events` migrationを適用。イベントID・種類・JSON object・発生日時・配信日時、各CHECK、未配信partial indexを実DBで確認し、integration test全体のGreenと`gofmt`差分なしを確認した。
+- 2026-08-25: Repository経由でevent envelopeをOutboxへ保存するtestを追加。`undefined: OutboxEvent`と`repo.SaveOutboxEvent undefined`だけとなる意図したcompile Redを確認し、zero-byteの`internal/postgres/outbox.go`を作成した。
+- 2026-08-25: `OutboxEvent`と`SaveOutboxEvent`を実装。Outboxを含むPostgreSQL Repository integration test全体のGreenと`gofmt`差分なしを確認し、次のtransaction境界を検証するzero-byteの`internal/postgres/transaction_test.go`を作成した。
+- 2026-08-25: transaction成功時のcommitとcallback error時のrollbackを外側のconnectionから観測するtestを追加。失敗が2か所の`undefined: NewTransactor`だけとなる意図したcompile Redを確認し、zero-byteの`internal/postgres/transaction.go`を作成した。
+- 2026-08-25: `Transactor`を実装。callback成功時のcommitとcallback error時のrollbackを含むPostgreSQL integration test全体のGreenと`gofmt`差分なしを確認し、片方向Likeのapplication transactionを検証するzero-byteの`internal/postgres/matching_service_test.go`を作成した。
+- 2026-08-25: 片方向LikeではLikeだけをcommitし、Match、Outbox、event ID生成が発生しないapplication transaction testを追加。失敗が`undefined: NewMatchingService`だけとなる意図したcompile Redと`gofmt`差分なしを確認し、zero-byteの`internal/postgres/matching_service.go`を作成した。
+- 2026-08-25: PostgreSQL用`MatchingService`からtransaction-bound Repositoryを既存の`matching.Service`へ渡す処理を実装。片方向Likeのapplication transaction testがGreenとなり、`gofmt`差分なしを確認した。
+- 2026-08-25: 相互LikeでLike 2件、正規化済みMatch 1件、対応するpending Outbox 1件を要求するtestを追加。LikeとMatchの検証後に`event ID generator calls = 0, want 1`だけで失敗し、Outbox記録だけが未実装である意図したbehavior Redを確認した。
+- 2026-08-25: `MatchCreated`がtrueの場合だけ正規化済みPairのpayloadと`match.created`をtransaction-bound RepositoryからOutboxへ保存する処理を実装。片方向Likeと相互Likeを含むPostgreSQL integration test全体のGreenと`gofmt`差分なしを確認した。
+- 2026-08-25: 成立済みMatchへ両方向のLikeを再送しても`LikeCreated`と`MatchCreated`がfalseとなり、Like 2件、Match 1件、Outbox 1件から増えない冪等性testを追加。PostgreSQL integration test全体のGreenと`gofmt`差分なしを確認した。
+- 2026-08-25: 空のevent IDで`outbox_events_id_not_empty` CHECK violationを発生させ、error chainにSQLSTATE `23514`を保持しつつ、そのtransactionの逆方向Like、Match、Outboxが0件へrollbackされ、先にcommit済みの片方向Likeだけが1件残ることを確認した。
+- 2026-08-25: Section 4完了確認としてunit、unit race、integration、integration race、通常・integrationのvet、`gofmt`を実行し、すべてGreen。PostgreSQL版`SendLike`でLike、Match、Outboxのcommit/rollbackと再送時の冪等性を実DBで証明した。
 
 ## 最終 acceptance criteria
 

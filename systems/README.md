@@ -40,6 +40,13 @@ Goでバックエンドの設計パターンを小さく実装し、ローカル
 | [WebSocket presence](./websocket-presence/) | 準備済み | heartbeat、multi-device、fan-out、offline resume | PostgreSQL、Redis | 中 |
 | [feature flag service](./feature-flag-service/) | 準備済み | stable rollout、override、cache、kill switch | kumo/DynamoDB・EventBridge・SQS | 中 |
 | [tamper-evident audit log](./tamper-evident-audit-log/) | 準備済み | append-only、hash chain、署名checkpoint、redaction | PostgreSQL、kumo/S3 | 中 |
+| [ML preprocessing pipeline](./ml-preprocessing-pipeline/) | 準備済み | streaming I/O、chunk、checkpoint、quality、lineage | PostgreSQL、kumo/S3・SQS | 高 |
+| [RAG document lifecycle](./rag-document-lifecycle/) | 準備済み | chunking、hybrid search、ACL、更新/削除、citation | PostgreSQL/pgvector、kumo/S3・SQS | 高 |
+| [LLM evaluation release gate](./llm-evaluation-release-gate/) | 準備済み | regression dataset、grader、人手校正、release gate | PostgreSQL、local model fixtures | 高 |
+| [safe agent tool execution](./safe-agent-tool-execution/) | 準備済み | validation、authorization、approval、idempotency、budget | PostgreSQL、kumo/SQS、local tool servers | 高 |
+| [LLM request gateway](./llm-request-gateway/) | 準備済み | capability routing、rate limit、fallback、degradation | PostgreSQL、Redis、local provider servers | 高 |
+| [AI observability and cost attribution](./ai-observability-cost-attribution/) | 準備済み | trace、TTFT、quality、usage ledger、cost attribution | PostgreSQL、OpenTelemetry | 高 |
+| [LLM low-latency response](./llm-low-latency-response/) | 準備済み | prompt/exact/semantic cache、streaming、false-hit防止 | PostgreSQL/pgvector、Redis、local LLM server | 高 |
 
 ## おすすめのつながり
 
@@ -54,6 +61,10 @@ Goでバックエンドの設計パターンを小さく実装し、ローカル
 9. `postgres-search-autocomplete`、`game-leaderboard`、`websocket-presence`でproduct機能向けのread/query modelを作る。
 10. `feature-flag-service`と`tamper-evident-audit-log`で安全なreleaseと運用証跡を扱う。
 11. `ranked-team-matchmaking`、`ecommerce-recommendation`、`partition-key-design`でアルゴリズムと分散を組み合わせる。
+12. `ml-preprocessing-pipeline`で大量dataを一定memoryかつ再実行可能にAIへ渡す入口を作る。
+13. `rag-document-lifecycle`で更新・削除・ACLを守る検索基盤を作り、`llm-evaluation-release-gate`で変更による品質低下を止める。
+14. `llm-request-gateway`でprovider障害とquotaを制御し、`llm-low-latency-response`でprompt cacheとresponse cache、streamingを分けて速度を改善する。
+15. `safe-agent-tool-execution`で副作用を安全に扱い、`ai-observability-cost-attribution`で1 requestの失敗・品質・費用を追跡する。
 
 これは固定順ではありません。各READMEが独立した入口なので、気になったworkspaceのSection 1から始められます。
 

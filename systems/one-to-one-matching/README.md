@@ -3,8 +3,8 @@
 マッチングアプリ型の「相互に好意を示した 2 人を 1 組の Match にする」仕組みを、Go とテストで小さく組み立てる学習用ワークスペースです。
 
 - Workspace status: `in_progress`
-- Active Section: `Section 2 — メモリ上の相互 Like`
-- Current files: `README.md`, `go.mod`, learner-written `internal/matching/pair.go` and `internal/matching/pair_test.go`
+- Active Section: `Section 3 — PostgreSQL の制約`
+- Current files: `README.md`, `go.mod`, and learner-written domain, Repository, and service files under `internal/matching`
 
 ## 学習の進め方
 
@@ -181,8 +181,8 @@ one-to-one-matching/
 | Section | State | 学ぶこと | 成果物 | 決定的なテスト |
 | --- | --- | --- | --- | --- |
 | 1. 2 人組の同一性 | `complete` | 値オブジェクト、方向あり/なし、正規化 | `UserID` と順序非依存な `Pair` | A–B と B–A が同一、自己・空 ID を拒否 |
-| 2. メモリ上の相互 Like | `active` | 状態遷移、Repository 境界、table-driven test | DB を使わない最小 matching service | 片方向では未成立、相互で 1 件、再送で増えない |
-| 3. PostgreSQL の制約 | `locked` | schema、migration、DB が守る不変条件 | Docker PostgreSQL と初期 migration | 不正 Like・重複 Like・重複 Match を DB が拒否 |
+| 2. メモリ上の相互 Like | `complete` | 状態遷移、Repository 境界、table-driven test | DB を使わない最小 matching service | 片方向では未成立、相互で 1 件、再送で増えない |
+| 3. PostgreSQL の制約 | `active` | schema、migration、DB が守る不変条件 | Docker PostgreSQL と初期 migration | 不正 Like・重複 Like・重複 Match を DB が拒否 |
 | 4. 永続化と transaction | `locked` | Repository、atomicity、rollback | PostgreSQL 版 `SendLike` | 逆 Like で Match と Outbox が同時に作られる |
 | 5. 冪等性と並行実行 | `locked` | race、lock/constraint、retry | 競合に耐える use case | 多数の同時実行後も Like・Match・event が各 1 件 |
 | 6. HTTP 境界 | `locked` | transport と domain の分離、status code | Like API と Match query API | HTTP 入力から DB の結果まで検証 |
@@ -459,7 +459,7 @@ go test ./...
 - 2026-08-25: top-level test と独立した subtest に `t.Parallel()` を追加。`go test -race -shuffle=on -count=10 ./...` と `go vet ./...` の成功を確認。
 - 2026-08-25: 完了条件を再検証し、Section 1 を `complete`、Section 2 を `active` に変更。
 
-## Active Section — Section 2: メモリ上の相互 Like
+## Completed Section — Section 2: メモリ上の相互 Like
 
 ### Question
 
@@ -488,11 +488,11 @@ go test ./...
 4. Like を保存し、逆 Like を調べ、必要なら Match を作る use case を実装する。
 5. 一方向、相互、重複送信を table-driven test で検証する。
 
-### Current micro-step
+### Completion
 
-- Target: Section 1 の境界を commit した後、方向付き `Like` のテストファイルを空で作成する。
-- Purpose: Match の `Pair` と異なり、Like では A→B と B→A が別物であることを最初に固定する。
-- Next check: 空ファイル作成後、方向を保持する最小の失敗テストを自分で入力する。
+- Result: 一方向Like、相互Like、成立後の2方向再送を、Repository境界を持つメモリ実装で再現した。
+- Evidence: `go test -count=1 ./internal/matching`、`go test -race -shuffle=on -count=10 ./...`、`go vet ./...` が成功し、`gofmt` 差分もない。
+- Concurrency scope: 各parallel testは別のRepositoryを使う。同じRepositoryへの同時書き込み耐性はSection 5で扱う。
 
 ### Tests
 
@@ -512,6 +512,79 @@ go test ./...
 ### Notes / evidence
 
 - 2026-08-25: Section 1 の完了確認後、Section 2 を開始。
+- 2026-08-25: 方向を保持するテストを入力し、`undefined: matching.NewLike` となる意図したRedを確認。zero-byteの `internal/matching/like.go` を作成。
+- 2026-08-25: 方向を保持する最小の `Like` を実装。`go test -count=1 ./internal/matching` のGreenと `gofmt` 差分なしを確認。
+- 2026-08-25: 空IDと自己Likeを拒否するtable-driven testを追加。`undefined: matching.ErrSelfLike` となる意図したRedを確認。
+- 2026-08-25: `NewLike` に空ID・自己Likeのvalidationを実装。`go test -count=1 ./internal/matching` のGreenと `gofmt` 差分なしを確認。zero-byteの `internal/matching/memory_repository_test.go` を作成。
+- 2026-08-25: 保存方向と重複保存のRepository testを入力。`undefined: matching.NewMemoryRepository` となる意図したRedを確認。zero-byteの `internal/matching/memory_repository.go` を作成。
+- 2026-08-25: `map[Like]struct{}` によるメモリRepositoryを実装。初回保存、重複保存、方向別検索のGreenと `gofmt` 差分なしを確認。
+- 2026-08-25: 入力順の異なる `Pair` を1件だけ保存するtestを追加。`SaveMatch` / `HasMatch` 未実装による意図したRedを確認。
+- 2026-08-25: `map[Pair]struct{}` によるMatch保存を実装。入力順に依存せず1件だけ保存されるGreenと `gofmt` 差分なしを確認。zero-byteの `internal/matching/service_test.go` を作成。
+- 2026-08-25: 一方向Likeを保存しMatchを作らないservice testを入力。`undefined: matching.NewService` となる意図したRedを確認。zero-byteの `internal/matching/service.go` を作成。
+- 2026-08-25: `SaveLike` だけに依存する最小serviceと結果型を実装。一方向LikeのGreenと `gofmt` 差分なしを確認。
+- 2026-08-25: A→Bの後にB→Aを送る相互Like testを追加。2回目が `MatchCreated: false` となる意図したRedを確認。
+- 2026-08-25: serviceが逆Likeを検索し、存在時に正規化した `Pair` を保存する状態遷移を実装。相互Like testのGreenと `gofmt` 差分なしを確認。
+- 2026-08-25: Match成立後にA→BとB→Aを再送する冪等性testを追加。両方とも `LikeCreated: false`、`MatchCreated: false` になることを確認。
+- 2026-08-25: `go test -count=1 ./internal/matching`、`go test -race -shuffle=on -count=10 ./...`、`go vet ./...` が成功。全Goファイルに `gofmt` 差分なし。Section 2の完了条件を満たした。
+- 2026-08-25: Section 2を `complete`、Section 3を `active` に変更。
+
+## Active Section — Section 3: PostgreSQL の制約
+
+### Question
+
+アプリケーションのvalidationを迂回する書き込みや、将来の実装ミスがあっても、PostgreSQL自身にLikeとMatchの不変条件を守らせるにはどの制約が必要でしょうか。
+
+### Learn
+
+- Dockerで実PostgreSQLを再現可能に起動する方法
+- migrationでschema変更を履歴として管理する考え方
+- primary key、foreign key、`NOT NULL`、`CHECK`が守る責務の違い
+- 方向付きLikeと、正規化された順序なしMatchをテーブルで表現する方法
+- mockではなく実DBへ不正なSQLを送り、制約違反をintegration testで観測する方法
+
+### Decide
+
+- PostgreSQLはDocker Composeで起動し、Section 3では実DBに対してschema testを行う。
+- 現在の `UserID` に合わせ、ID列はまず `text` とする。空文字はusersテーブルの`CHECK`で拒否する。
+- likesは `(sender_id, receiver_id)` を方向付きの複合primary keyとし、自己Likeを`CHECK`で拒否する。
+- matchesは `(user_low_id, user_high_id)` を複合primary keyとし、`user_low_id < user_high_id` を要求して非正規順と自己Matchを拒否する。
+- usersを参照するforeign keyにより、存在しないユーザーのLikeとMatchを拒否する。
+- PostgreSQL版Repository、transaction、OutboxはSection 4で扱い、このSectionではschema制約に集中する。
+- 同じDB状態を共有するintegration testには安易に`t.Parallel()`を付けず、testごとの分離方法を決めてから並列化する。
+
+### Build
+
+1. PostgreSQLだけを起動する最小の`compose.yaml`を書く。
+2. users、likes、matchesを作る初期migrationを書く。
+3. GoのPostgreSQL driverとintegration testの接続・schema初期化処理を用意する。
+4. 正常なLikeとMatchを実DBへ保存できることを確認する。
+5. 空ID、未知ユーザー、自己Like、重複Like、非正規Match、重複MatchをDBが拒否することをtable-driven testで確認する。
+
+### Current micro-step
+
+- Target: Section 2のcommit後、空の`compose.yaml`を作成する。
+- Purpose: integration testの対象となるPostgreSQLを、ローカルで同じ設定から起動できるようにする。
+- Next check: Compose設定を自分で入力し、構文検証とhealth checkを確認する。
+
+### Tests
+
+- 正常なユーザー、方向付きLike、正規化済みMatchを保存できる。
+- 空のユーザーIDと存在しないユーザー参照を拒否する。
+- 自己Likeと同一方向の重複Likeを拒否し、逆方向Likeは許可する。
+- 自己Match、非正規順のMatch、同じPairの重複Matchを拒否する。
+- 制約違反をGoのintegration testがエラーとして観測する。
+
+### Done when
+
+- `docker compose config`が成功し、PostgreSQLがhealthyになる。
+- 初期migrationを空のDBへ適用できる。
+- 実PostgreSQLを使うschema integration testが全制約を検証する。
+- unit testとintegration testを分離して実行できる。
+- `go test -count=1 ./...`と、Section 3で確定するintegration testコマンドが成功する。
+
+### Notes / evidence
+
+- 2026-08-25: Section 2の完了確認後、Section 3を開始。PostgreSQL RepositoryとtransactionはSection 4へ残し、schema制約を対象とした。
 
 ## 最終 acceptance criteria
 

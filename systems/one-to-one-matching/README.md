@@ -3,8 +3,8 @@
 マッチングアプリ型の「相互に好意を示した 2 人を 1 組の Match にする」仕組みを、Go とテストで小さく組み立てる学習用ワークスペースです。
 
 - Workspace status: `in_progress`
-- Active Section: `Section 3 — PostgreSQL の制約`
-- Current files: `README.md`, `go.mod`, and learner-written domain, Repository, and service files under `internal/matching`
+- Active Section: `none — Section 3 complete; Section 4 not started`
+- Current files: `README.md`, `go.mod`, `go.sum`, learner-written Go files under `internal/matching` and `internal/postgres`, `compose.yaml`, `migrations/001_init.up.sql`
 
 ## 学習の進め方
 
@@ -182,7 +182,7 @@ one-to-one-matching/
 | --- | --- | --- | --- | --- |
 | 1. 2 人組の同一性 | `complete` | 値オブジェクト、方向あり/なし、正規化 | `UserID` と順序非依存な `Pair` | A–B と B–A が同一、自己・空 ID を拒否 |
 | 2. メモリ上の相互 Like | `complete` | 状態遷移、Repository 境界、table-driven test | DB を使わない最小 matching service | 片方向では未成立、相互で 1 件、再送で増えない |
-| 3. PostgreSQL の制約 | `active` | schema、migration、DB が守る不変条件 | Docker PostgreSQL と初期 migration | 不正 Like・重複 Like・重複 Match を DB が拒否 |
+| 3. PostgreSQL の制約 | `complete` | schema、migration、DB が守る不変条件 | Docker PostgreSQL と初期 migration | 不正 Like・重複 Like・重複 Match を DB が拒否 |
 | 4. 永続化と transaction | `locked` | Repository、atomicity、rollback | PostgreSQL 版 `SendLike` | 逆 Like で Match と Outbox が同時に作られる |
 | 5. 冪等性と並行実行 | `locked` | race、lock/constraint、retry | 競合に耐える use case | 多数の同時実行後も Like・Match・event が各 1 件 |
 | 6. HTTP 境界 | `locked` | transport と domain の分離、status code | Like API と Match query API | HTTP 入力から DB の結果まで検証 |
@@ -528,7 +528,7 @@ go test ./...
 - 2026-08-25: `go test -count=1 ./internal/matching`、`go test -race -shuffle=on -count=10 ./...`、`go vet ./...` が成功。全Goファイルに `gofmt` 差分なし。Section 2の完了条件を満たした。
 - 2026-08-25: Section 2を `complete`、Section 3を `active` に変更。
 
-## Active Section — Section 3: PostgreSQL の制約
+## Completed Section — Section 3: PostgreSQL の制約
 
 ### Question
 
@@ -560,11 +560,11 @@ go test ./...
 4. 正常なLikeとMatchを実DBへ保存できることを確認する。
 5. 空ID、未知ユーザー、自己Like、重複Like、非正規Match、重複MatchをDBが拒否することをtable-driven testで確認する。
 
-### Current micro-step
+### Completion
 
-- Target: Section 2のcommit後、空の`compose.yaml`を作成する。
-- Purpose: integration testの対象となるPostgreSQLを、ローカルで同じ設定から起動できるようにする。
-- Next check: Compose設定を自分で入力し、構文検証とhealth checkを確認する。
+- Result: Docker PostgreSQLへ初期migrationを適用し、users、方向付きlikes、正規順matchesの不変条件を実DBの制約として実装・検証した。
+- Test policy: integration testは`integration` build tagでunit testから分離し、各caseをtransactionでrollbackする。共有DBと同じfixture IDを使うため`t.Parallel()`は付けない。
+- Evidence: unit/integration test、race・shuffle各10回、integrationを含むvet、`gofmt`、`go mod tidy -diff`がすべて成功。Docker PostgreSQLのhealthy、全constraint、test後の全テーブル0件も確認した。
 
 ### Tests
 
@@ -585,6 +585,16 @@ go test ./...
 ### Notes / evidence
 
 - 2026-08-25: Section 2の完了確認後、Section 3を開始。PostgreSQL RepositoryとtransactionはSection 4へ残し、schema制約を対象とした。
+- 2026-08-25: 公式PostgreSQL imageの18.6 tagとPostgreSQL 18以降のvolume path変更を確認。zero-byteの`compose.yaml`を作成。
+- 2026-08-25: learner-written `compose.yaml`について`docker compose config`成功、PostgreSQL 18.6のhealthy状態、localhost:5432の公開を確認。zero-byteの`internal/postgres/schema_test.go`を作成。
+- 2026-08-25: pgxによる接続・Ping testが`integration` build tag付きで成功。通常のunit testと`gofmt`も成功し、zero-byteの`migrations/001_init.up.sql`を作成。
+- 2026-08-25: users、方向付きlikes、正規順matchesの初期migrationを空DBへ適用。ID列の`COLLATE "C"`と`matches_users_ordered`制約を実DBで確認した。
+- 2026-08-25: test transaction内で既知ユーザー、両方向Like 2件、正規順Match 1件を保存できることを確認。rollback後に全テーブルが0件へ戻ることも確認した。
+- 2026-08-25: PostgreSQL接続処理をtest helperへ集約。helper利用後もintegration/unit testのGreenと`gofmt`差分なしを確認した。
+- 2026-08-25: 空UserIDを`users_id_not_empty`、Like/Matchの未知ユーザー参照を各FOREIGN KEYが拒否することをSQLSTATEとconstraint名で確認した。
+- 2026-08-25: 自己LikeをCHECK、同方向重複を複合PRIMARY KEYが拒否し、逆方向Likeは2件目として保存できることを確認した。
+- 2026-08-25: 自己Matchと逆順Matchを`matches_users_ordered`、正規順Pairの重複を`matches_pkey`が拒否することを確認した。integration/unit test、vet、`gofmt`は成功したが、`go mod tidy -diff`で未整理差分を検出した。
+- 2026-08-25: `go mod tidy`後の差分なしを確認。unit/integrationのrace・shuffle各10回、integrationを含むvet、全Goファイルの`gofmt`、Compose構文とPostgreSQL healthが成功し、Section 3を完了した。
 
 ## 最終 acceptance criteria
 

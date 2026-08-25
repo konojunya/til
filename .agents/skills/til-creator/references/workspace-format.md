@@ -10,8 +10,9 @@ Include these parts:
    - Name the system and mark one active Section.
    - State that the directory intentionally contains only the README at creation time.
 2. **Learning contract**
-   - The learner types implementation and tests.
-   - Codex creates only the empty files needed for the current micro-step, presents reference code in chat, reviews learner-written work, runs tests, and updates learning documentation.
+   - Codex writes and explains tests for the current micro-step.
+   - The learner types production implementation, schema, migration, and runtime configuration from the reference code presented in chat.
+   - Codex may create only a missing zero-byte production file, then reviews learner-written work, runs tests, and updates learning documentation.
 3. **Outcome**
    - Describe the final behavior in observable terms.
 4. **Scope and non-goals**
@@ -70,12 +71,12 @@ Keep the expanded Section focused:
 - **Learn:** the minimum concepts needed for that problem.
 - **Decide:** choices the learner should make consciously.
 - **Build:** a short ordered list of learner-written artifacts.
-- **Current micro-step:** the one empty file being prepared now and the behavior it will establish.
+- **Current micro-step:** the one test behavior Codex will write next, followed by the missing zero-byte production file the learner will implement when needed.
 - **Tests:** behaviors and edge cases, expressed without overfitting function names.
 - **Done when:** observable completion conditions and the exact verification command when known.
 - **Notes/evidence:** initially empty; later record decisions and concise test results.
 
-When the learner begins a micro-step, create only its missing target file as a zero-byte file. Present the proposed code and its purpose in chat rather than filling the file. For test-driven work, observe the intended failing test before preparing and explaining the implementation file. Avoid expanding later Sections at the same time.
+When the learner begins a micro-step, Codex writes only the active test and test-only helpers. After observing the intended Red, create a missing production target as a zero-byte file and present the proposed implementation and its purpose in chat. Avoid expanding later Sections at the same time.
 
 ## Advancing a Section
 

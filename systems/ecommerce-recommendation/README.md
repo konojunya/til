@@ -41,6 +41,32 @@ flowchart LR
     RecommendAPI[Recommendation API] --> DDB
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant EventAPI as Event API
+    participant Kinesis as kumo Kinesis
+    participant Consumer
+    participant Log as Interaction Log
+    participant Builder as Model Builder
+    participant S3 as Versioned Artifact
+    participant DDB as Serving Index
+    participant Recommend as Recommendation API
+    User->>EventAPI: view/cart/purchase
+    EventAPI->>Kinesis: interaction event
+    Kinesis-->>Consumer: ordered delivery
+    Consumer->>Log: idempotent append
+    Builder->>Log: training windowを読む
+    Builder->>S3: versioned model artifact
+    Builder->>DDB: candidate/ranking indexを切替
+    User->>Recommend: recommendationsを要求
+    Recommend->>DDB: user candidatesを取得
+    DDB-->>Recommend: ranked products + model version
+    Recommend-->>User: recommendations
+```
+
 ## 外部システム
 
 - kumo/Kinesis: event ingestionとpartition keyによるuser内順序を観察する。

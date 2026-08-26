@@ -38,6 +38,26 @@ flowchart LR
     Harness --> Evidence[Plan and correctness evidence]
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    participant Harness as Go Test Harness
+    participant Seeder
+    participant PG as Docker PostgreSQL
+    participant Evidence as Plan Evidence
+    Harness->>Seeder: seedと規模を指定
+    Seeder->>PG: deterministic datasetを作成
+    Harness->>PG: baseline queryを実行
+    PG-->>Harness: rows + latency
+    Harness->>PG: EXPLAIN ANALYZE BUFFERS
+    PG-->>Evidence: baseline plan
+    Harness->>PG: index/query strategyを適用
+    Harness->>PG: 同じqueryとplanを再計測
+    PG-->>Evidence: candidate plan
+    Evidence->>Evidence: result同値性とplan invariantを比較
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: versionを固定し、real planner、buffer、MVCC、lock tableを観察する。

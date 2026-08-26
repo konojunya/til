@@ -42,6 +42,35 @@ flowchart LR
     Compare --> Gate[Release decision]
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Developer
+    participant Runner as Eval Runner
+    participant Base as Baseline Target
+    participant Candidate as Candidate Target
+    participant Graders
+    participant PG as Run Artifacts
+    participant Gate as Release Gate
+    Developer->>Runner: suite + candidate configを実行
+    loop 同じevaluation cases
+        Runner->>Base: fixed input/fixture
+        Base-->>Runner: baseline response + usage
+        Runner->>Candidate: same input/fixture
+        Candidate-->>Runner: candidate response + usage
+        Runner->>Graders: paired responses + assertions
+        Graders-->>Runner: quality/safety/latency results
+        Runner->>PG: immutable sample results
+    end
+    Runner->>Gate: segment別comparison
+    alt critical failureまたは閾値超過
+        Gate-->>Developer: release rejected + regressions
+    else 全policyを満たす
+        Gate-->>Developer: release approved + report
+    end
+```
+
 ## 外部システム
 
 - Docker PostgreSQL: suite、case、config、run、sample result、human label、gate decisionを保存する。

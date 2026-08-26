@@ -40,6 +40,32 @@ flowchart LR
     Jobs[Tenant-scoped workers] --> Pool
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant Auth as Auth Middleware
+    participant API as Project API
+    participant Pool as DB Pool
+    participant PG as PostgreSQL + RLS
+    Client->>Auth: credential + request
+    Auth->>Auth: tenant/principalを検証
+    Auth->>API: trusted tenant context
+    API->>Pool: transactionを開始
+    Pool->>PG: SET LOCAL tenant_id
+    API->>PG: tenant条件付きquery
+    PG->>PG: RLS policyを適用
+    alt same tenant
+        PG-->>API: authorized rows
+        API-->>Client: response
+    else cross-tenant access
+        PG-->>API: no rows / policy error
+        API-->>Client: not found / forbidden
+    end
+    API->>Pool: transaction終了でtenant contextを破棄
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: composite constraints、roles、RLS policy、transaction-local settingを実物で検証する。

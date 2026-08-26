@@ -41,6 +41,31 @@ flowchart LR
     Rebuild --> Redis
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    participant Match as Match Service
+    participant API as Score API
+    participant PG as PostgreSQL Scores
+    participant Projector
+    participant Redis as Sorted Sets
+    actor Player
+    participant Query as Leaderboard API
+    Match->>API: match result + idempotency key
+    API->>PG: score eventとtotalをcommit
+    API-->>Match: accepted
+    Projector->>PG: unprojected score eventsを読む
+    Projector->>Redis: season scoreをatomic更新
+    Player->>Query: 周辺順位を要求
+    Query->>Redis: rank + neighbors
+    Redis-->>Player: stable leaderboard page
+    opt Redisを再構築
+        Projector->>PG: season totalsを再読込
+        Projector->>Redis: versioned setを作成して切替
+    end
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: match result receipt、score event、season、current totalをtransactionで保存する。

@@ -37,6 +37,30 @@ flowchart LR
     Sweeper[Expiration workers] -->|SKIP LOCKED| PG
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Buyer
+    participant API as Inventory API
+    participant Redis as Admission Gate
+    participant PG as PostgreSQL Stock
+    participant Sweeper
+    Buyer->>API: itemをreserve
+    API->>Redis: burst admissionを確認
+    Redis-->>API: admitted
+    API->>PG: stockをlockしてreservation作成
+    alt stockあり
+        PG-->>API: committed reservation + expiry
+        API-->>Buyer: reserved
+    else sold out
+        PG-->>API: insufficient stock
+        API-->>Buyer: sold out
+    end
+    Sweeper->>PG: expired rowsをSKIP LOCKEDでclaim
+    Sweeper->>PG: reservation取消とstock返却をcommit
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: inventory row、reservation、idempotency key、state transitionをtransactionとconstraintで守る。

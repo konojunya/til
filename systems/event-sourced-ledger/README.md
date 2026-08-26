@@ -42,6 +42,35 @@ flowchart LR
     Publisher --> SQS[kumo / SQS]
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as Command API
+    participant PG as Event Store + Outbox
+    participant Publisher
+    participant SQS as kumo SQS
+    participant Projector
+    participant Read as Wallet Summary
+    Client->>API: debit command(expected version)
+    API->>PG: stream eventsをload
+    PG-->>API: current aggregate state
+    API->>PG: eventとoutboxをexpected versionでappend
+    alt version一致
+        PG-->>API: committed
+        API-->>Client: accepted + new version
+        Publisher->>PG: pending eventをclaim
+        Publisher->>SQS: ledger eventをpublish
+        SQS-->>Projector: eventを配送
+        Projector->>PG: eventをreplay
+        Projector->>Read: summaryを更新
+    else concurrent update
+        PG-->>API: optimistic conflict
+        API-->>Client: retryable conflict
+    end
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: ordered event stream、expected version constraint、command receipt、snapshot、projection、outboxを保存する。

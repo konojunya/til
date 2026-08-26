@@ -43,6 +43,34 @@ flowchart LR
     Trace --> Incident[Single-request investigation]
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant API as Go Workflow
+    participant RAG as Retrieval
+    participant LLM as Model Provider
+    participant Tool as External Tool
+    participant OTel as OTel Collector
+    participant PG as Usage Ledger
+    User->>API: AI機能を実行
+    API->>OTel: trace開始(request/feature/tenant)
+    API->>RAG: 根拠を検索
+    RAG-->>API: document IDs + scores
+    API->>LLM: promptを送信
+    opt tool callが必要
+        LLM-->>API: tool intent
+        API->>Tool: validated call
+        Tool-->>API: result
+        API->>LLM: resultを追加
+    end
+    LLM-->>API: response + usage
+    API->>PG: stage別usageを一度だけ記録
+    API->>OTel: spansとoutcomeを完了
+    API-->>User: response + trace ID
+```
+
 ## 外部システム
 
 - OpenTelemetry Collector + local trace backend: OTLP trace/metricをDocker内で受け取り検索する。

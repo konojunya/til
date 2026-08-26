@@ -41,6 +41,31 @@ flowchart LR
     Validator --> S3
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Admin
+    participant Service as Go Application
+    participant PG as Business + Audit Chain
+    participant Checkpointer
+    participant S3 as kumo S3 Anchor
+    participant Validator
+    Admin->>Service: privileged operation
+    Service->>PG: business change + chained audit entryを同一transactionでcommit
+    PG-->>Service: committed sequence/hash
+    Service-->>Admin: operation result + audit ID
+    Checkpointer->>PG: latest chain headを読む
+    Checkpointer->>S3: signed checkpointをappend
+    Validator->>PG: entriesを順番に再hash
+    Validator->>S3: trusted checkpointと照合
+    alt 改ざん・欠落・並べ替えあり
+        Validator-->>Admin: 最初の不一致位置を報告
+    else chain valid
+        Validator-->>Admin: verified checkpoint range
+    end
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: sequence、canonical event、previous/current hash、append権限を保存する。

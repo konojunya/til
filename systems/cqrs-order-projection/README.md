@@ -41,6 +41,31 @@ flowchart LR
     QueryAPI[Query API] --> DDB
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant Command as Command API
+    participant PG as PostgreSQL + Outbox
+    participant Publisher
+    participant Bus as EventBridge + SQS
+    participant Projector
+    participant DDB as Read Model
+    participant Query as Query API
+    Client->>Command: order command
+    Command->>PG: orderとeventを同一transactionでcommit
+    Command-->>Client: command accepted
+    Publisher->>PG: pending eventをclaim
+    Publisher->>Bus: order eventをpublish
+    Bus-->>Projector: eventを配送
+    Projector->>DDB: version付きでprojection更新
+    Client->>Query: order viewを取得
+    Query->>DDB: read modelを読む
+    DDB-->>Query: current projection
+    Query-->>Client: eventually consistent view
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: write model、aggregate version、outbox eventのsource of truth。

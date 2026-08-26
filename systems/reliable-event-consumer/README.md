@@ -40,6 +40,29 @@ flowchart LR
     Queue -->|max receives| DLQ[kumo / SQS DLQ]
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    participant Producer
+    participant SQS as kumo SQS
+    participant Consumer
+    participant PG as Inbox + Business State
+    participant DLQ as kumo DLQ
+    Producer->>SQS: event(message ID)
+    SQS-->>Consumer: at-least-once delivery
+    Consumer->>PG: Inbox insert + effectを同一transactionで実行
+    alt 初回message
+        PG-->>Consumer: effect committed
+    else duplicate message
+        PG-->>Consumer: Inbox conflict、effectはskip
+    end
+    Consumer->>SQS: delete/ack
+    alt permanent failureがmax receivesへ到達
+        SQS->>DLQ: messageを隔離
+    end
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: `event_id`のunique Inboxとbusiness side effectを同じtransactionで保存する。

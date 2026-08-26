@@ -39,6 +39,32 @@ flowchart LR
     API[Replay / status API] --> PG
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    participant Producer
+    participant PG as Events + Deliveries
+    participant Worker
+    participant Receiver as Webhook Receiver
+    actor Operator
+    participant API as Status / Replay API
+    Producer->>PG: eventとdeliveryをcommit
+    Worker->>PG: due deliveryをlease付きでclaim
+    Worker->>Receiver: timestamp + HMAC付きPOST
+    alt 2xx
+        Receiver-->>Worker: accepted
+        Worker->>PG: delivered + response metadata
+    else 429/5xx/timeout
+        Receiver-->>Worker: retryable failure
+        Worker->>PG: next attemptをjitter付きでschedule
+        Worker->>Receiver: 同じdelivery IDでretry
+    end
+    Operator->>API: status確認 / replay要求
+    API->>PG: historyを取得 / 新attemptを作成
+    API-->>Operator: attempt history
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: subscription、immutable event、delivery、attempt、next retryを保存する。

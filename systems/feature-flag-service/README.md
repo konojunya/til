@@ -41,6 +41,29 @@ flowchart LR
     App --> SDK
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Admin
+    participant API as Flag Admin API
+    participant DDB as DynamoDB Flags
+    participant Bus as EventBridge + SQS
+    participant SDK as Go Evaluation SDK
+    participant App
+    Admin->>API: rollout ruleを更新
+    API->>DDB: version付きflagを保存
+    API->>Bus: flag.updatedをpublish
+    Bus-->>SDK: update eventを配送
+    SDK->>DDB: versionを確認してrefresh
+    App->>SDK: Evaluate(flag, subject)
+    SDK-->>App: stable variation + reason
+    opt eventを取り逃した場合
+        SDK->>DDB: poll fallback
+        DDB-->>SDK: current version
+    end
+```
+
 ## 外部システム
 
 - kumo/DynamoDB: environment+flag key、published version、conditional updateを保存する。

@@ -40,6 +40,36 @@ flowchart LR
     Worker -->|atomic claim| PG
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Player
+    participant API as Queue API
+    participant PG as PostgreSQL Tickets
+    participant Redis as Candidate Index
+    participant Worker as Matcher Worker
+    participant Algo as Team Builder
+    Player->>API: MMR付きticketをenqueue
+    API->>PG: waiting ticketをcommit
+    API->>Redis: searchable candidateへ追加
+    Worker->>Redis: wait時間に応じたMMR範囲で取得
+    Redis-->>Worker: candidate tickets
+    Worker->>Algo: 10人を2 teamへ編成
+    Algo-->>Worker: fairness score + teams
+    Worker->>PG: 10 ticketsをatomic claimしてmatch作成
+    alt 他workerとのclaim競合
+        PG-->>Worker: conflict
+        Worker->>Redis: 残ったcandidateで再試行
+    else claim成功
+        PG-->>Worker: match committed
+        Player->>API: queue statusを取得
+        API->>PG: assignmentを読む
+        PG-->>API: committed match
+        API-->>Player: match assignment
+    end
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: durable ticket、party member、match、assignmentと一意制約を所有する。

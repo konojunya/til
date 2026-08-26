@@ -41,6 +41,35 @@ flowchart LR
     SFN -->|failure path| Comp[Reverse compensations]
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as Order API
+    participant Saga as kumo Step Functions
+    participant Inventory
+    participant Payment
+    participant Shipment
+    Client->>API: orderを作成
+    API->>Saga: saga instanceを開始
+    Saga->>Inventory: stockをreserve
+    Inventory-->>Saga: reservation ID
+    Saga->>Payment: paymentをauthorize
+    Payment-->>Saga: payment ID
+    Saga->>Shipment: shipmentを作成
+    alt 全step成功
+        Shipment-->>Saga: shipment ID
+        Saga-->>API: order completed
+        API-->>Client: completed
+    else payment/shipment失敗
+        Saga->>Payment: authorize済みならrefund/cancel
+        Saga->>Inventory: reservationをrelease
+        Saga-->>API: compensated / manual intervention
+        API-->>Client: failed without leaked effects
+    end
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: 1 instance内の分離schemaで3serviceの所有権を模擬する。serviceをまたぐSQL transactionは禁止する。

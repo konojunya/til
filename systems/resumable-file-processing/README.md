@@ -42,6 +42,34 @@ flowchart LR
     Worker --> PG
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as File API
+    participant PG as PostgreSQL Metadata
+    participant S3 as kumo S3
+    participant SQS as kumo SQS
+    participant Worker
+    Client->>API: upload sessionを作成
+    API->>PG: file IDとmultipart stateをcommit
+    API-->>Client: part upload operations
+    loop 未完了parts
+        Client->>S3: part + checksumをupload
+        S3-->>Client: ETag
+        Client->>API: completed partを記録
+    end
+    Client->>API: multipart complete
+    API->>S3: partsをcomplete
+    S3->>SQS: object event
+    SQS-->>Worker: processing job
+    Worker->>S3: objectをstream readして検証
+    Worker->>PG: resultをidempotentにcommit
+    Client->>API: statusを取得
+    API-->>Client: completed / resumable state
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: file owner、upload state、expected checksum、object key、processing stateを保存する。

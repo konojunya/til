@@ -44,6 +44,34 @@ flowchart LR
     PG --> Hybrid
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    participant Source
+    participant S3 as kumo S3
+    participant SQS as kumo SQS
+    participant Ingester
+    participant PG as PostgreSQL + pgvector
+    actor User
+    participant Query as Query API
+    participant Rank as Hybrid Search + Rerank
+    Source->>S3: versioned documentを保存
+    S3->>SQS: ingestion event
+    SQS-->>Ingester: at-least-once delivery
+    Ingester->>PG: chunks/embeddingをstaging保存
+    Ingester->>PG: 完成versionをatomic activate
+    User->>Query: question + principal
+    Query->>PG: ACL内でFTS/vector candidatesを取得
+    PG-->>Query: permitted active chunksのみ
+    Query->>Rank: candidatesをrerank
+    Rank-->>Query: reranked evidence
+    Query-->>User: grounded answer + versioned citations
+    opt 文書を更新・削除
+        Ingester->>PG: active version切替 / tombstone
+    end
+```
+
 ## 外部システム
 
 - Docker PostgreSQL + pgvector: document metadata、ACL、full-text index、embedding、active/tombstone stateを保持する。

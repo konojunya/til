@@ -42,6 +42,36 @@ flowchart LR
     Gateway --> Product
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    participant Product
+    participant Gateway as LLM Gateway
+    participant Redis as Quota + Circuit State
+    participant A as Provider A
+    participant B as Provider B
+    participant PG as Usage Ledger
+    Product->>Gateway: request + capabilities + budget
+    Gateway->>Redis: tenant/provider budgetをreserve
+    Redis-->>Gateway: admitted
+    Gateway->>A: primary attempt(deadline)
+    alt primary success
+        A-->>Gateway: stream + usage
+    else 429/timeout/5xx
+        A-->>Gateway: retryable failure
+        Gateway->>Redis: failureをrecord/circuit判定
+        alt Provider Bがrequired capabilityを満たす
+            Gateway->>B: remaining budgetでfallback
+            B-->>Gateway: response + usage
+        else safe fallbackなし
+            Gateway-->>Product: explicit degraded/error result
+        end
+    end
+    Gateway->>PG: attemptsとfinal usageを一度だけ記録
+    Gateway-->>Product: response + provider/degradation metadata
+```
+
 ## 外部システム
 
 - Docker Redis: tenant/provider rate limit、concurrency slot、短命circuit stateを保持する。

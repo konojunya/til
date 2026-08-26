@@ -39,6 +39,32 @@ flowchart LR
     Writer -->|invalidate after commit| Cache
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as Product API
+    participant Redis as Redis Cache
+    participant PG as PostgreSQL
+    Client->>API: 商品を取得
+    API->>Redis: cache lookup
+    alt cache hit
+        Redis-->>API: cached product + version
+    else cache miss
+        Redis-->>API: miss
+        API->>PG: current productを読む
+        PG-->>API: product + version
+        API->>Redis: TTL付きで保存
+    end
+    API-->>Client: product
+    Client->>API: 商品を更新
+    API->>PG: updateしてcommit
+    PG-->>API: new version
+    API->>Redis: commit後にinvalidate
+    API-->>Client: updated
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: productとmonotonic versionのsource of truth。

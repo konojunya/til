@@ -39,6 +39,31 @@ flowchart LR
     Validator[Consistency checker] --> PG
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    participant Migrator as DDL Migrator
+    participant Old as Old App
+    participant New as New App
+    participant PG as PostgreSQL
+    participant Backfill
+    participant Validator
+    Migrator->>PG: new nullable column/indexをexpand
+    par 移行中のtraffic
+        Old->>PG: old schemaへwrite
+    and
+        New->>PG: old + newへcompatible write
+    and
+        Backfill->>PG: 未移行rowを小batchで更新
+    end
+    Validator->>PG: old/new valueの整合性を検査
+    PG-->>Validator: mismatch count = 0
+    New->>PG: read pathをnew schemaへ切替
+    Migrator->>PG: constraintをvalidateしてcontract
+    Note over Old,PG: old appが残る間は破壊的変更を行わない
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: real lock、constraint、index build、MVCC、transactionを検証する。

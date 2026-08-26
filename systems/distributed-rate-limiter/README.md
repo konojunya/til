@@ -38,6 +38,27 @@ flowchart LR
     Limiter --> Redis[(Redis bucket state)]
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as Any API Instance
+    participant Limiter as Rate Limit Middleware
+    participant Redis as Redis Token Bucket
+    Client->>API: request(tenant/key)
+    API->>Limiter: admissionを確認
+    Limiter->>Redis: refill + consumeをatomic実行
+    alt tokenあり
+        Redis-->>Limiter: allowed + remaining
+        Limiter-->>API: proceed
+        API-->>Client: response + limit headers
+    else tokenなし
+        Redis-->>Limiter: denied + retry-after
+        Limiter-->>Client: 429 Too Many Requests
+    end
+```
+
 ## 外部システム
 
 - Redis（Docker）: bucket tokenとlast refill時刻を保持し、Lua scriptで判定を原子的に行う。

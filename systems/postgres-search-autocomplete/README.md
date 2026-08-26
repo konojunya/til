@@ -39,6 +39,26 @@ flowchart LR
     Rank --> Client
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as Search API
+    participant Normalize as Query Normalizer
+    participant PG as PostgreSQL Search Index
+    Client->>API: query + filters + cursor
+    API->>Normalize: locale-aware normalization
+    Normalize-->>API: terms + search mode
+    API->>PG: FTS/trigram query + stable tie-breaker
+    PG-->>API: ranked rows + next cursor values
+    API-->>Client: results + opaque cursor
+    Client->>API: same query + next cursor
+    API->>PG: keyset pagination
+    PG-->>API: ranked next rows
+    API-->>Client: duplicateなしのnext page
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: `tsvector`、GIN index、`pg_trgm` extension、real query planを検証する。

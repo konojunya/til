@@ -39,6 +39,28 @@ flowchart LR
     Metrics[Distribution metrics] --> Strategy
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    participant Load as Deterministic Workload
+    participant Strategy as Partition Strategy
+    participant Kinesis as kumo Kinesis
+    participant Consumer
+    participant DDB as Sharded DynamoDB
+    participant Query as Fan-in Query
+    participant Metrics
+    Load->>Strategy: tenant + timestamp + event
+    Strategy->>Strategy: shard suffixを決定
+    Strategy->>Kinesis: distributed partition keyでpublish
+    Kinesis-->>Consumer: shardごとにordered delivery
+    Consumer->>DDB: sharded keyへwrite
+    Query->>DDB: 対象shardを並列read
+    DDB-->>Query: partial results
+    Query->>Query: merge + stable order
+    Metrics->>Strategy: shard分布と最大偏りを評価
+```
+
 ## 外部システム
 
 - kumo/Kinesis: partition keyごとのorderingとstream ingestionを観察する。

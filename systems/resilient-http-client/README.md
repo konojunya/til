@@ -40,6 +40,36 @@ flowchart LR
     Retry --> Server[Local fault-injection HTTP server]
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant Client as Resilient Client
+    participant Bulkhead
+    participant Breaker as Circuit Breaker
+    participant Server as Fault-injection Server
+    Caller->>Client: operation + overall deadline
+    Client->>Bulkhead: concurrency slotを取得
+    Client->>Breaker: upstreamを呼べるか確認
+    alt circuit open
+        Breaker-->>Client: open
+        Client->>Bulkhead: slotを解放
+        Client-->>Caller: fast failure
+    else circuit closed/half-open
+        Client->>Server: attempt 1
+        alt retryable failureか429
+            Server-->>Client: error + Retry-After
+            Client->>Client: remaining budget内でbackoff
+            Client->>Server: next attempt
+        end
+        Server-->>Client: final response
+        Client->>Breaker: outcomeをrecord
+        Client->>Bulkhead: slotを解放
+        Client-->>Caller: response / bounded error
+    end
+```
+
 ## 外部システム
 
 - Go `httptest.Server`とcustom `RoundTripper`: delay、EOF、connection reset、429、5xx、巨大bodyをlocalに再現する。

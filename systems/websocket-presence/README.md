@@ -41,6 +41,35 @@ flowchart LR
     Resume[HTTP resume API] --> PG
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Alice
+    actor Bob
+    participant WS1 as WebSocket Server A
+    participant Redis as Presence + PubSub
+    participant WS2 as WebSocket Server B
+    participant PG as PostgreSQL Messages
+    participant Resume as HTTP Resume API
+    Alice->>WS1: connect(session A)
+    WS1->>Redis: presence lease + heartbeat
+    Bob->>WS2: connect(session B)
+    WS2->>Redis: presence lease + heartbeat
+    Alice->>WS1: message(client sequence)
+    WS1->>PG: messageをidempotentにcommit
+    WS1->>Redis: channelへpublish
+    Redis-->>WS2: fan-out event
+    WS2-->>Bob: message + server sequence
+    opt Bobが切断後にresume
+        Bob->>Resume: last seen sequenceで取得
+        Resume->>PG: missed messagesを取得
+        PG-->>Resume: ordered messages
+        Resume-->>Bob: gapを返す
+        Bob->>WS2: live WebSocketへ再接続
+    end
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: room membership、ordered message、read cursorを保存する。

@@ -43,6 +43,46 @@ flowchart LR
     Executor --> PG
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant API as Agent API
+    participant Planner as Scripted AI Planner
+    participant Policy as Parser + Policy
+    participant Approval
+    participant PG as Run + Outbox
+    participant Publisher as Outbox Publisher
+    participant SQS as kumo SQS
+    participant Executor
+    participant Tool as Local External Tool
+    User->>API: goalを依頼
+    API->>Planner: planning request
+    Planner-->>Policy: typed tool intent候補
+    Policy->>Policy: schema/authz/risk/budgetを検証
+    alt denyまたはbudget超過
+        Policy-->>API: denied + reason
+        API-->>User: 実行せず理由を返す
+    else approvalが必要
+        Policy->>Approval: argument hash付き承認を要求
+        Approval-->>User: effectの内容を表示
+        User->>Approval: approve
+        Approval->>PG: approval + Outboxをcommit
+        Publisher->>PG: pending executionをclaim
+        Publisher->>SQS: execution event
+        SQS-->>Executor: duplicate可能なdelivery
+        Executor->>PG: idempotency keyをclaim
+        Executor->>Tool: validated effectを実行
+        Tool-->>Executor: external effect ID
+        Executor->>PG: resultとauditをcommit
+        User->>API: run statusを取得
+        API->>PG: execution resultを読む
+        PG-->>API: completed result
+        API-->>User: completed result
+    end
+```
+
 ## 外部システム
 
 - Docker PostgreSQL: run、intent、policy decision、approval、execution、idempotency、Outbox/Inbox、audit logを保持する。

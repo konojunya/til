@@ -57,6 +57,38 @@ flowchart LR
     API --> Metrics[TTFB / TTFT / complete / hit kind]
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as Streaming API
+    participant Redis as Exact Cache
+    participant Vector as pgvector Semantic Cache
+    participant Flight as Singleflight
+    participant LLM as Local Streaming Provider
+    Client->>API: question + scope + versions
+    API->>Redis: exact keyをlookup
+    alt exact hit
+        Redis-->>API: validated cached response
+        API-->>Client: immediate response(exact)
+    else exact miss
+        API->>Vector: scope filter + nearest candidates
+        alt safe semantic hit
+            Vector-->>API: response + provenance
+            API-->>Client: immediate response(semantic)
+        else missまたはfalse-hit guard拒否
+            API->>Flight: 同一missをcoalesce
+            Flight->>LLM: stable prefix + dynamic question
+            LLM-->>API: first token
+            API-->>Client: token streamを開始
+            LLM-->>API: completed response + usage
+            API->>Vector: validated entryを保存
+            API->>Redis: exact entryを保存
+        end
+    end
+```
+
 ## 外部システム
 
 - Docker Redis: exact response、TTL、generation counter、distributed singleflight/leaseを保持する。

@@ -99,6 +99,31 @@ flowchart LR
     class Likes,Matches,Outbox source;
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Alice
+    actor Bob
+    participant API as Go HTTP API
+    participant PG as PostgreSQL
+    participant Publisher as Outbox Publisher
+    participant SQS as kumo SQS
+    Alice->>API: BobへLike
+    API->>PG: like(Alice, Bob)をcommit
+    PG-->>API: reverse Likeなし
+    API-->>Alice: Like created
+    Bob->>API: AliceへLike
+    API->>PG: user pairのadvisory lockを取得
+    API->>PG: Like + Match + Outboxを同一transactionでcommit
+    PG-->>API: Match created
+    API-->>Bob: Match created
+    Publisher->>PG: pending match.createdをclaim
+    Publisher->>SQS: eventをpublish
+    SQS-->>Publisher: accepted
+    Publisher->>PG: publishedへ更新
+```
+
 同期処理の成功条件は PostgreSQL のコミットです。SQS 送信を同じ処理の成功条件にはしません。これにより、キュー障害時にも成立済み Match を失わず、Outbox publisher が後で再試行できます。
 
 ## 外部システム

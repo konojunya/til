@@ -43,6 +43,31 @@ flowchart LR
     Worker --> PG
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    participant Producer
+    participant S3 as kumo S3
+    participant Coordinator
+    participant PG as PostgreSQL Manifest
+    participant SQS as kumo SQS
+    participant Worker
+    Producer->>S3: versioned source + checksumをupload
+    Producer->>Coordinator: dataset processingを開始
+    Coordinator->>PG: manifestとchunk planをcommit
+    Coordinator->>SQS: chunk jobsをpublish
+    SQS-->>Worker: at-least-once delivery
+    Worker->>S3: byte rangeをstream read
+    alt valid records
+        Worker->>S3: staging output + checksum
+    else malformed records
+        Worker->>S3: source offset付きquarantine
+    end
+    Worker->>PG: chunk outputを一度だけcommit
+    Note over Coordinator,PG: 全chunk完了後にdatasetをcompletedへ遷移
+```
+
 ## 外部システム
 
 - Docker PostgreSQL: dataset、chunk、attempt、checkpoint、quality resultをtransactionで管理する。

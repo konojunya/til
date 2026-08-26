@@ -39,6 +39,33 @@ flowchart LR
     Reaper[Lease recovery] --> PG
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as Job API
+    participant PG as PostgreSQL
+    participant A as Worker A
+    participant Reaper
+    participant B as Worker B
+    Client->>API: jobを登録
+    API->>PG: pending jobをcommit
+    A->>PG: lease + fencing tokenをclaim
+    loop 実行中
+        A->>PG: heartbeat(token)
+    end
+    alt Worker Aが完了
+        A->>PG: token付きでcomplete
+    else Worker Aが停止
+        Reaper->>PG: expired leaseをrelease
+        B->>PG: より新しいtokenでreclaim
+        B->>PG: complete
+        A->>PG: 古いtokenで更新
+        PG-->>A: stale workerを拒否
+    end
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: durable job、lease、attempt、fencing tokenをtransactionとrow lockで所有する。

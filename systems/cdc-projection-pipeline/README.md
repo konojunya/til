@@ -40,6 +40,26 @@ flowchart LR
     Checkpoint[(LSN checkpoint)] --> Reader
 ```
 
+### 代表シーケンス
+
+```mermaid
+sequenceDiagram
+    participant App
+    participant PG as PostgreSQL + WAL
+    participant Reader as CDC Reader
+    participant Kinesis as kumo Kinesis
+    participant Projector
+    participant DDB as DynamoDB Projection
+    App->>PG: business rowをcommit
+    PG-->>Reader: WAL change + LSN
+    Reader->>Kinesis: ordered change envelope
+    Kinesis-->>Projector: at-least-once delivery
+    Projector->>DDB: idempotent projection update
+    DDB-->>Projector: applied version
+    Projector->>Reader: processed LSNをcheckpoint
+    Note over Reader,DDB: restart時はcheckpoint以降を再送して収束
+```
+
 ## 外部システム
 
 - PostgreSQL（Docker）: `wal_level=logical`、publication、replication slot、real WAL/LSNを扱う。

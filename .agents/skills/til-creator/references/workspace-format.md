@@ -20,7 +20,9 @@ Include these parts:
 5. **Use cases and invariants**
    - Use concrete actors, commands, state changes, and forbidden states.
 6. **System overview**
-   - Add a compact Mermaid diagram when there is more than one component or boundary.
+   - Add a compact Mermaid component/flow diagram when there is more than one component or boundary.
+   - Add a Mermaid `sequenceDiagram` for one representative end-to-end scenario. Start from the actor or trigger, cross the important synchronous and asynchronous boundaries, show source-of-truth writes, and finish at the observable result.
+   - Keep the sequence focused on the system's main learning path. Add an `alt`, `opt`, or `par` branch only when failure, retry, duplicate delivery, compensation, cache hit, or concurrency is part of the central behavior.
    - Distinguish the source of truth from derived or asynchronous state.
 7. **External systems**
    - Explain why each dependency exists, how it runs locally, and how tests observe it.
@@ -45,11 +47,14 @@ At workspace creation, do not include the active Section's Go answer. The learne
 
 Before creating the first Section file or presenting its reference code, explain the whole learning path in chat. The explanation must include:
 
+- first, a short statement of the completed system's observable outcome and a Mermaid `sequenceDiagram` of its representative end-to-end scenario;
 - the total number of Sections;
 - for every Section, the behavior implemented, the main idea being practiced, and the decisive test;
 - the final end-to-end scenario that joins the Sections together;
 - every external system, why it is needed, and the Section where it first appears; and
 - which later details remain provisional until earlier design choices are exercised.
+
+Explain the sequence before the Section-by-Section list so the learner has a mental model for where each later implementation fits. A component flowchart can supplement the sequence but does not replace it.
 
 The README roadmap remains the source of truth for progress. The chat orientation should make that roadmap understandable before implementation begins, without expanding future Sections into code or files.
 

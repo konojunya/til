@@ -31,7 +31,7 @@ Use this mode when the learner names a new system to study.
 4. Create one kebab-case topic directory containing only `README.md`.
 5. Read and follow [references/workspace-format.md](references/workspace-format.md) for the README contents.
 6. Define the whole target system and Section roadmap, but expand only the first active Section. Leave implementation/reference code for that Section until the learner asks to begin it or asks a question about it.
-7. Before creating any Section 1 file or presenting its code, explain the complete roadmap in chat: the total number of Sections, what each Section implements, the main concept it teaches, the decisive test for it, and the final end-to-end behavior. Include every external system and why it appears. Mark future details as provisional where earlier decisions may change them.
+7. Before creating any Section 1 file or presenting its code, explain the complete system in chat. Start with a short outcome statement and a compact Mermaid `sequenceDiagram` of one representative end-to-end scenario, then explain the roadmap: the total number of Sections, what each Section implements, the main concept it teaches, the decisive test for it, and the final end-to-end behavior. Include every external system and why it appears. Mark future details as provisional where earlier decisions may change them.
 
 Do not create an empty Go scaffold. The absence of `go.mod`, source, tests, database files, and container configuration is intentional.
 
@@ -39,7 +39,9 @@ Do not create an empty Go scaffold. The absence of `go.mod`, source, tests, data
 
 The initial README roadmap is the durable record, but it does not replace a conversational orientation. When the learner asks to begin Section 1:
 
-- Summarize the complete system journey before giving the first code exercise.
+- Open with the final observable outcome and a Mermaid `sequenceDiagram` before listing individual Sections. The diagram should show the representative actor/request, synchronous calls, source-of-truth writes, asynchronous hand-offs, external systems, and returned/observable result that apply.
+- Keep the sequence compact enough to explain in one pass. Use `alt`, `opt`, or `par` only when a failure, retry, duplicate, cache hit, compensation, or concurrent path is central to the system being studied.
+- Explain the complete system journey represented by the diagram before giving the first code exercise. A component flowchart by itself does not replace this sequence explanation.
 - State how many Sections there are and describe every Section's implementation boundary, learning focus, and proof of completion.
 - Connect the Sections to the final observable scenario, including the public boundary, source of truth, asynchronous boundary, and end-to-end test where applicable.
 - Explain which external systems will be introduced, in which Section, and what behavior each one owns.
@@ -87,7 +89,7 @@ After the final Section, run the documented unit, integration, concurrency, and 
 - Use PostgreSQL in Docker when relational persistence is part of the design.
 - Introduce an asynchronous AWS service only when it owns a real system behavior, not merely to add infrastructure.
 - When an AWS asynchronous service is used, model it locally and in tests with [sivchari/kumo](https://github.com/sivchari/kumo) and the AWS SDK for Go v2.
-- Show external dependencies, synchronous boundaries, asynchronous boundaries, and sources of truth in the architecture section.
+- Show external dependencies, synchronous boundaries, asynchronous boundaries, and sources of truth in the architecture section. Preserve a component/flow diagram when useful and also include a Mermaid `sequenceDiagram` for the representative end-to-end path; the two diagrams answer different questions.
 - Make invariants executable at the narrowest useful layer: domain tests, database constraints, transaction tests, concurrency tests, and boundary tests.
 - Include idempotency, ordering, retries, duplicates, partial failure, and transaction boundaries only where the chosen system can actually encounter them.
 

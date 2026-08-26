@@ -13,6 +13,7 @@ Include these parts:
    - Codex writes and explains tests for the current micro-step.
    - The learner types production implementation, schema, migration, and runtime configuration from the reference code presented in chat.
    - Codex may create only a missing zero-byte production file, then reviews learner-written work, runs tests, and updates learning documentation.
+   - After a Section's completion conditions pass, Codex commits only that Section's implementation, tests, generated artifacts, and README evidence automatically. Push remains explicit.
 3. **Outcome**
    - Describe the final behavior in observable terms.
 4. **Scope and non-goals**
@@ -64,9 +65,9 @@ Use exactly these states:
 
 - `active`: the only expanded Section and the current learning target.
 - `locked`: a future Section whose detail may change based on earlier decisions.
-- `complete`: its completion conditions were verified, with evidence recorded.
+- `complete`: its completion conditions were verified, evidence was recorded, and the Section boundary was committed.
 
-Never mark a Section complete because prose was written or files merely exist.
+Never mark a Section complete because prose was written or files merely exist. The transition is not finalized until its scoped commit succeeds or an existing commit containing the completed work is identified.
 
 ## Active Section shape
 
@@ -93,8 +94,10 @@ Before advancing:
 4. Change the current state to `complete` and the next state to `active`.
 5. Collapse the completed Section to a short record if the README would otherwise become noisy.
 6. Expand the next Section using the active Section shape.
+7. Inspect the working tree, stage only the completed Section's files and README transition by explicit path, review the staged diff, and run `git diff --cached --check`.
+8. Commit the Section boundary before presenting the next micro-step. Report the commit hash, message, and completion test evidence; do not push without an explicit request.
 
-If tests cannot run because learner-owned setup is missing, leave the Section active and state exactly what is missing.
+If tests cannot run because learner-owned setup is missing, leave the Section active and state exactly what is missing. If unrelated work overlaps the same files and cannot be separated safely, leave the completion changes uncommitted and explain the overlap instead of staging broad paths.
 
 ## Final verification map
 

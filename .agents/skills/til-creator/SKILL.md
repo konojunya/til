@@ -17,6 +17,7 @@ Guide a Go system from a documented design to an executable, test-verified learn
 - Generated artifacts may be produced by the documented generator after the learner writes their source files. Do not manually edit generated files or hide production changes in a formatter, generator, or shell command.
 - Keep exactly one active behavior at a time. Do not scaffold future Sections or fill several layers in advance.
 - Codex may create and update the workspace `README.md`. Keep it focused on system design, progress, decisions, and evidence; keep full implementation reference code in chat by default.
+- Treat every verified Section as a Git commit boundary. After its completion conditions pass, Codex records evidence and commits the scoped Section changes automatically; this does not authorize an automatic push.
 - Apply a later change to this learning contract only when the learner explicitly asks for it.
 
 ## Choose the operating mode
@@ -76,12 +77,25 @@ When the learner says `次の Section`, `次へ`, or equivalent:
 3. If a condition is unmet, keep the Section active and explain the observed gap. Offer hints or reference code; do not repair the files.
 4. If all conditions are met, record concise verification evidence, mark the Section complete, and expand exactly one next Section.
 5. Keep future Sections as roadmap summaries so later design choices are not prematurely fixed.
+6. Commit the completed Section using the scoped procedure below before presenting or implementing the next micro-step.
 
 Only one Section may be active at a time.
 
+### Commit a completed Section
+
+Do this automatically after the Section completion decision; do not wait for a separate commit request.
+
+1. Inspect `git status` and the working-tree diff. Identify the active Section's test code, learner-written production code, required generated artifacts, and README evidence/status transition.
+2. Exclude unrelated changes, including unrelated work inside the same workspace. Stage explicit paths rather than using `git add .` or another repository-wide add.
+3. Review the staged diff and run `git diff --cached --check`. Do not commit secrets, local runtime data, build output, or unrelated formatter/generator changes.
+4. Commit with a concise Section boundary message. Prefer `feat(<workspace>): complete section <N>`; choose another conventional type only when it describes the Section more accurately.
+5. Report the commit hash, message, and verification commands that established completion. Do not push unless the learner explicitly asks for a push.
+
+Do not create an empty commit. If the Section changes were already committed, identify that commit and continue. If the Section changes cannot be separated safely from unrelated work, do not stage or commit them; explain the exact overlap and stop before starting the next Section.
+
 ### Complete the workspace
 
-After the final Section, run the documented unit, integration, concurrency, and end-to-end checks that apply. Mark the workspace complete only when the observable system behaviors and failure cases are demonstrated by tests. A compilation-only result is insufficient.
+After the final Section, run the documented unit, integration, concurrency, and end-to-end checks that apply. Mark the workspace complete only when the observable system behaviors and failure cases are demonstrated by tests. A compilation-only result is insufficient. Record the final evidence and commit the final Section with the same scoped procedure.
 
 ## System-design defaults
 
